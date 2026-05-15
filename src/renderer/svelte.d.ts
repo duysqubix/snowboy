@@ -1,3 +1,5 @@
+import type { SnowboyApi } from '../main/types';
+
 declare module '*.svelte' {
   import type { Component } from 'svelte';
   const component: Component;
@@ -8,7 +10,7 @@ declare module '*.css';
 
 declare global {
   interface Window {
-    snowboy: Record<string, never>;
+    snowboy: SnowboyApi;
   }
 }
 

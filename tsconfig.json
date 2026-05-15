@@ -1,4 +1,11 @@
 {
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "$lib/*": ["src/renderer/lib/*"],
+      "@renderer/*": ["src/renderer/*"]
+    }
+  },
   "files": [],
   "references": [
     { "path": "./tsconfig.main.json" },

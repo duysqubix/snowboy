@@ -30,7 +30,7 @@ test.describe('snowboy boot smoke', () => {
       await expect(window.getByRole('heading', { name: 'Snowboy' })).toBeVisible({
         timeout: 10_000
       });
-      await expect(window.getByText(/initializing/i)).toBeVisible();
+      await expect(window.getByText(/Ready/i)).toBeVisible();
     } finally {
       await app.close();
     }

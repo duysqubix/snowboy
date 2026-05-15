@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { registerIpc } from './ipc/index';
 
 console.log('[main] snowboy starting');
 
@@ -88,6 +89,7 @@ function createWindow(): void {
 
 void app.whenReady().then(async () => {
   await smokeLoadNatives();
+  registerIpc();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

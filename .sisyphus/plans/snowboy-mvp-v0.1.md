@@ -61,7 +61,7 @@ These are documented as "Coming soon" in the UI where relevant, with a tracking 
 | Package manager | Bun | 1.1.x+ |
 | Test runner | `bun test` | 1.1.x+ |
 | Build / bundler | `electron-vite` (Vite under the hood) | 0.29.x+ |
-| UI framework | Svelte 5 (Runes mode) | 5.x |
+| UI framework | Svelte 5 (Runes per-file, auto-detected) | 5.x |
 | State | Svelte stores + runes (no external lib) | — |
 | IPC | Typed `contextBridge` + `ipcRenderer.invoke` (custom thin wrapper; tRPC overkill for v0.1) | — |
 | SQL editor | CodeMirror 6 + `svelte-codemirror-editor` + custom Snowflake dialect | latest |

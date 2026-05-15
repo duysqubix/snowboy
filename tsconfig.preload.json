@@ -21,5 +21,9 @@
     "outDir": "out/.types/preload",
     "tsBuildInfoFile": "out/.types/preload.tsbuildinfo"
   },
-  "include": ["src/preload/**/*.ts"]
+  "include": [
+    "src/preload/**/*.ts",
+    "src/main/types.ts",
+    "src/main/ipc/channels.ts"
+  ]
 }

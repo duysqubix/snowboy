@@ -1,0 +1,146 @@
+/**
+ * Shared types between main, preload, and renderer. Source of truth for the
+ * `SnowboyApi` IPC surface (plan §5.2). Payload shapes for modules owned by
+ * other Wave 1 tasks (`Worksheet`, `HistoryEntry`) are structural placeholders
+ * here; Wave 3 wiring reconciles them when concrete types land.
+ */
+
+export type SessionId = string & { readonly __brand: 'SessionId' };
+export type QueryId = string & { readonly __brand: 'QueryId' };
+
+export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password';
+
+export interface ConnectionProfile {
+  id: string;
+  name: string;
+  accountUrl: string;
+  authMethod: AuthMethod;
+  username: string;
+  defaultRole?: string;
+  defaultWarehouse?: string;
+  defaultDatabase?: string;
+  defaultSchema?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TestResult {
+  ok: boolean;
+  message?: string;
+  durationMs?: number;
+}
+
+export interface SessionContext {
+  role?: string;
+  warehouse?: string;
+  database?: string;
+  schema?: string;
+}
+
+export interface RunOptions {
+  timeoutMs?: number;
+  fetchSize?: number;
+  tag?: string;
+}
+
+export type SchemaObjectKind = 'table' | 'view' | 'database' | 'schema' | 'column';
+
+export interface SchemaObject {
+  name: string;
+  kind: SchemaObjectKind;
+  comment?: string;
+}
+
+export interface Column {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  comment?: string;
+}
+
+export interface ObjectRef {
+  database: string;
+  schema: string;
+  name: string;
+  kind: SchemaObjectKind;
+}
+
+export type HistoryStatus = 'success' | 'error' | 'cancelled';
+
+export interface HistoryFilter {
+  worksheetId?: string;
+  profileId?: string;
+  status?: HistoryStatus;
+  since?: number;
+  until?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface HistoryEntry {
+  id: string;
+  worksheetId?: string;
+  profileId: string;
+  role?: string;
+  warehouse?: string;
+  databaseName?: string;
+  schemaName?: string;
+  sql: string;
+  startedAt: number;
+  endedAt?: number;
+  status: HistoryStatus;
+  rowCount?: number;
+  bytesScanned?: number;
+  queryId?: string;
+  errorMessage?: string;
+}
+
+export interface Worksheet {
+  id: string;
+  title: string;
+  body: string;
+  cursorLine?: number;
+  cursorCol?: number;
+  lastSessionContext?: SessionContext;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type LayoutTree =
+  | { kind: 'leaf'; paneId: string }
+  | { kind: 'split'; direction: 'h' | 'v'; sizes: number[]; children: LayoutTree[] };
+
+export interface SnowboyApi {
+  connections: {
+    listProfiles(): Promise<ConnectionProfile[]>;
+    saveProfile(p: ConnectionProfile): Promise<{ id: string }>;
+    deleteProfile(id: string): Promise<void>;
+    test(profileId: string): Promise<TestResult>;
+  };
+  sessions: {
+    open(profileId: string, context: SessionContext): Promise<SessionId>;
+    close(sessionId: SessionId): Promise<void>;
+    setContext(sessionId: SessionId, context: Partial<SessionContext>): Promise<void>;
+  };
+  query: {
+    run(sessionId: SessionId, sql: string, options?: RunOptions): Promise<QueryId>;
+    cancel(queryId: QueryId): Promise<void>;
+  };
+  schema: {
+    listDatabases(sessionId: SessionId): Promise<string[]>;
+    listSchemas(sessionId: SessionId, db: string): Promise<string[]>;
+    listObjects(sessionId: SessionId, db: string, schema: string): Promise<SchemaObject[]>;
+    getColumns(sessionId: SessionId, obj: ObjectRef): Promise<Column[]>;
+    getDDL(sessionId: SessionId, obj: ObjectRef): Promise<string>;
+  };
+  history: {
+    list(filter?: HistoryFilter): Promise<HistoryEntry[]>;
+    get(id: string): Promise<HistoryEntry>;
+  };
+  workspace: {
+    saveLayout(layout: LayoutTree): Promise<void>;
+    loadLayout(): Promise<LayoutTree>;
+    saveWorksheet(w: Worksheet): Promise<void>;
+    listWorksheets(): Promise<Worksheet[]>;
+  };
+}
