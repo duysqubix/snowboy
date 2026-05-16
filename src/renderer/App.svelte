@@ -20,6 +20,16 @@
   let connectionsOpen = $state(false);
   let historyOpen = $state(false);
 
+  function openConnections(): void {
+    setTimeout(() => {
+      connectionsOpen = true;
+    }, 0);
+  }
+
+  function toggleHistory(): void {
+    historyOpen = !historyOpen;
+  }
+
   function insertSqlIntoActivePane(sql: string) {
     toast.info('Insert into active pane pending (Wave 3)', { description: sql });
   }
@@ -62,8 +72,8 @@
 
 <div class="flex flex-col h-full w-full bg-background text-foreground overflow-hidden">
   <TopBar
-    onOpenConnections={() => (connectionsOpen = true)}
-    onToggleHistory={() => (historyOpen = !historyOpen)}
+    onOpenConnections={openConnections}
+    onToggleHistory={toggleHistory}
   />
 
   <TabBar />
