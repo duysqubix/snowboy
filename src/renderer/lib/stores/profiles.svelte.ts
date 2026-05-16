@@ -2,18 +2,10 @@ import { nanoid } from 'nanoid';
 import type { ConnectionProfile, TestResult } from '../../../main/types';
 import { snowboy } from '../ipc/client';
 
+type ProfileInput = Omit<ConnectionProfile, 'id' | 'createdAt' | 'updatedAt'>;
+
 class ProfilesStore {
-  #profiles = $state<ConnectionProfile[]>([
-    {
-      id: nanoid(),
-      name: 'Demo Profile',
-      accountUrl: 'demo.snowflakecomputing.com',
-      authMethod: 'externalbrowser',
-      username: 'demo@example.com',
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
-  ]);
+  #profiles = $state<ConnectionProfile[]>([]);
   #activeProfileId = $state<string | null>(null);
 
   get list() {
@@ -24,36 +16,56 @@ class ProfilesStore {
     return this.#activeProfileId;
   }
 
-  add(p: Omit<ConnectionProfile, 'id' | 'createdAt' | 'updatedAt'>): ConnectionProfile {
-    const newProfile: ConnectionProfile = {
-      ...p,
-      id: nanoid(),
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    this.#profiles.push(newProfile);
-    return newProfile;
-  }
-
-  update(id: string, patch: Partial<ConnectionProfile>): void {
-    const index = this.#profiles.findIndex(p => p.id === id);
-    if (index !== -1) {
-      const existing = this.#profiles[index];
-      if (existing) {
-        this.#profiles[index] = {
-          ...existing,
-          ...patch,
-          updatedAt: Date.now()
-        };
-      }
+  async refresh(): Promise<void> {
+    const fresh = await snowboy.connections.listProfiles();
+    this.#profiles = fresh;
+    if (
+      this.#activeProfileId !== null &&
+      !fresh.some((p) => p.id === this.#activeProfileId)
+    ) {
+      this.#activeProfileId = null;
     }
   }
 
-  remove(id: string): void {
-    this.#profiles = this.#profiles.filter(p => p.id !== id);
+  async add(input: ProfileInput): Promise<ConnectionProfile> {
+    const now = Date.now();
+    const newProfile: ConnectionProfile = {
+      ...input,
+      id: nanoid(),
+      createdAt: now,
+      updatedAt: now
+    };
+    await snowboy.connections.saveProfile(newProfile);
+    await this.refresh();
+    const saved = this.#profiles.find((p) => p.id === newProfile.id);
+    if (!saved) {
+      throw new Error(`Saved profile ${newProfile.id} missing after refresh`);
+    }
+    return saved;
+  }
+
+  async update(id: string, patch: Partial<ConnectionProfile>): Promise<void> {
+    const existing = this.#profiles.find((p) => p.id === id);
+    if (!existing) {
+      throw new Error(`No profile with id=${id}`);
+    }
+    const updated: ConnectionProfile = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: Date.now()
+    };
+    await snowboy.connections.saveProfile(updated);
+    await this.refresh();
+  }
+
+  async remove(id: string): Promise<void> {
+    await snowboy.connections.deleteProfile(id);
     if (this.#activeProfileId === id) {
       this.#activeProfileId = null;
     }
+    await this.refresh();
   }
 
   setActive(id: string | null): void {
@@ -63,18 +75,17 @@ class ProfilesStore {
   async test(id: string): Promise<TestResult> {
     try {
       return await snowboy.connections.test(id);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-      if (err?.message?.includes('NotImplemented') || err?.name === 'NotImplementedError') {
-        return new Promise(resolve => {
-          setTimeout(() => {
-            resolve({ ok: true, durationMs: 500 });
-          }, 500);
-        });
-      }
-      throw err;
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : String(err)
+      };
     }
   }
 }
 
 export const profiles = new ProfilesStore();
+
+void profiles.refresh().catch((err: unknown) => {
+  console.error('[profiles] initial load failed:', err);
+});

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { CHANNELS } from '../main/ipc/channels';
 import type {
   Column,
@@ -7,7 +7,10 @@ import type {
   HistoryFilter,
   LayoutTree,
   ObjectRef,
+  QueryCompleteEvent,
+  QueryErrorEvent,
   QueryId,
+  QueryRowBatchEvent,
   RunOptions,
   SchemaObject,
   SessionContext,
@@ -16,6 +19,18 @@ import type {
   TestResult,
   Worksheet
 } from '../main/types';
+
+function makeEventBridge<T>(channel: string) {
+  return (handler: (event: T) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: T): void => {
+      handler(payload);
+    };
+    ipcRenderer.on(channel, listener);
+    return () => {
+      ipcRenderer.off(channel, listener);
+    };
+  };
+}
 
 const api = {
   connections: {
@@ -48,6 +63,11 @@ const api = {
       ipcRenderer.invoke(CHANNELS.query.run, sessionId, sql, options),
     cancel: (queryId: QueryId): Promise<void> =>
       ipcRenderer.invoke(CHANNELS.query.cancel, queryId)
+  },
+  queryEvents: {
+    onRowBatch: makeEventBridge<QueryRowBatchEvent>(CHANNELS.queryEvents.rowBatch),
+    onComplete: makeEventBridge<QueryCompleteEvent>(CHANNELS.queryEvents.complete),
+    onError: makeEventBridge<QueryErrorEvent>(CHANNELS.queryEvents.error)
   },
   schema: {
     listDatabases: (sessionId: SessionId): Promise<string[]> =>

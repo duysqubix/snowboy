@@ -1,20 +1,80 @@
 <script lang="ts">
   import { Input } from '$lib/components/ui/input';
   import { Separator } from '$lib/components/ui/separator';
+  import { toast } from 'svelte-sonner';
   import HistoryRow from './HistoryRow.svelte';
-  import { generateMockHistory } from './mockHistory';
+  import { snowboy } from '$lib/ipc/client';
+  import { tabs } from '$lib/stores/tabs.svelte';
+  import { profiles } from '$lib/stores/profiles.svelte';
+  import type { HistoryEntry } from '../../../main/types';
 
-  let {
-    onRestore
-  }: {
-    onRestore?: (sql: string) => void;
-  } = $props();
+  let { onRestore }: { onRestore?: (sql: string) => void } = $props();
 
-  const allEntries = generateMockHistory(1000);
   const ROW_HEIGHT = 64;
   const OVERSCAN = 5;
+  const FETCH_LIMIT = 1000;
+
+  let allEntries = $state<HistoryEntry[]>([]);
+  let totalLoaded = $state(0);
+  let loading = $state(false);
+  let loadError = $state<string | null>(null);
 
   let searchQuery = $state('');
+
+  async function refresh(): Promise<void> {
+    loading = true;
+    loadError = null;
+    const activeProfileId = profiles.activeProfileId;
+    const filter: { limit: number; profileId?: string } = { limit: FETCH_LIMIT };
+    if (activeProfileId !== null) {
+      filter.profileId = activeProfileId;
+    }
+    try {
+      const rows = await snowboy.history.list(filter);
+      allEntries = rows;
+      totalLoaded = rows.length;
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : String(err);
+      allEntries = [];
+      totalLoaded = 0;
+    } finally {
+      loading = false;
+    }
+  }
+
+  $effect(() => {
+    void profiles.activeProfileId;
+    void refresh();
+  });
+
+  $effect(() => {
+    const unsubscribe = snowboy.queryEvents.onComplete(() => {
+      void refresh();
+    });
+    return () => unsubscribe();
+  });
+
+  $effect(() => {
+    const unsubscribe = snowboy.queryEvents.onError(() => {
+      void refresh();
+    });
+    return () => unsubscribe();
+  });
+
+  function handleRestore(sql: string): void {
+    const tree = tabs.active?.paneTree;
+    if (tree && typeof tree.setActivePaneSql === 'function') {
+      const wrote = tree.setActivePaneSql(sql);
+      if (wrote) {
+        toast.success('SQL restored to active pane');
+      } else {
+        toast.error('No active pane to restore SQL into');
+      }
+    } else {
+      toast.error('Active pane unavailable');
+    }
+    onRestore?.(sql);
+  }
 
   let filteredEntries = $derived(
     searchQuery.trim() === ''
@@ -38,7 +98,7 @@
     return () => ro.disconnect();
   });
 
-  function handleScroll(e: Event) {
+  function handleScroll(e: Event): void {
     scrollTop = (e.currentTarget as HTMLDivElement).scrollTop;
   }
 
@@ -64,7 +124,13 @@
       class="w-full bg-background"
     />
     <div class="px-1 text-xs text-muted-foreground">
-      {filteredEntries.length} of {allEntries.length} entries
+      {#if loading}
+        Loading…
+      {:else if loadError}
+        <span class="text-red-500">Load failed: {loadError}</span>
+      {:else}
+        {filteredEntries.length} of {totalLoaded} entries
+      {/if}
     </div>
   </div>
 
@@ -81,14 +147,14 @@
           style="position: absolute; top: {(visibleStart + i) *
             ROW_HEIGHT}px; left: 0; right: 0; height: {ROW_HEIGHT}px;"
         >
-          <HistoryRow {entry} {onRestore} />
+          <HistoryRow {entry} onRestore={handleRestore} />
         </div>
       {/each}
     </div>
 
-    {#if filteredEntries.length === 0}
+    {#if !loading && filteredEntries.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-        No matching queries found.
+        {searchQuery.trim() === '' ? 'No queries yet — run one to see history.' : 'No matching queries found.'}
       </div>
     {/if}
   </div>

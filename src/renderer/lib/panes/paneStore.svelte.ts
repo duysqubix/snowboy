@@ -1,36 +1,36 @@
-import type { SessionContext } from '../../../main/types';
+import { SvelteMap } from 'svelte/reactivity';
+import type { QueryId } from '../../../main/types';
 
-export interface PaneState extends SessionContext {
-  dirty: boolean;
-  body: string;
-  title: string;
+export class PaneStateFacade {
+  role = $state<string | undefined>(undefined);
+  warehouse = $state<string | undefined>(undefined);
+  database = $state<string | undefined>(undefined);
+  schema = $state<string | undefined>(undefined);
+  dirty = $state<boolean>(false);
+  body = $state<string>('');
+  title = $state<string>('Untitled');
+  currentQueryId = $state<QueryId | null>(null);
 }
 
-export function createPaneState() {
-  const state = $state<PaneState>({
-    role: undefined,
-    warehouse: undefined,
-    database: undefined,
-    schema: undefined,
-    dirty: false,
-    body: '',
-    title: 'Untitled'
-  });
+const registry = new SvelteMap<string, PaneStateFacade>();
 
-  return {
-    get role() { return state.role; },
-    set role(v) { state.role = v; },
-    get warehouse() { return state.warehouse; },
-    set warehouse(v) { state.warehouse = v; },
-    get database() { return state.database; },
-    set database(v) { state.database = v; },
-    get schema() { return state.schema; },
-    set schema(v) { state.schema = v; },
-    get dirty() { return state.dirty; },
-    set dirty(v) { state.dirty = v; },
-    get body() { return state.body; },
-    set body(v) { state.body = v; },
-    get title() { return state.title; },
-    set title(v) { state.title = v; }
-  };
+export function getOrCreatePaneState(paneId: string): PaneStateFacade {
+  let state = registry.get(paneId);
+  if (state === undefined) {
+    state = new PaneStateFacade();
+    registry.set(paneId, state);
+  }
+  return state;
+}
+
+export function getPaneState(paneId: string): PaneStateFacade | null {
+  return registry.get(paneId) ?? null;
+}
+
+export function deletePaneState(paneId: string): void {
+  registry.delete(paneId);
+}
+
+export function __clearPaneRegistryForTesting(): void {
+  registry.clear();
 }

@@ -43,6 +43,37 @@ export interface RunOptions {
   tag?: string;
 }
 
+/**
+ * Column metadata as streamed across the IPC boundary for query results.
+ * Mirrors the renderer's `Column` shape with an explicit `dataType` (matches
+ * `snowflake-sdk`'s `getType()` strings such as `'NUMBER'`, `'TEXT'`,
+ * `'TIMESTAMP_NTZ'`). Kept separate from the schema-inspection `Column`
+ * type so result-set columns and schema columns can evolve independently.
+ */
+export interface ResultColumn {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+}
+
+export interface QueryRowBatchEvent {
+  queryId: QueryId;
+  rows: Record<string, unknown>[];
+  columns: ResultColumn[];
+}
+
+export interface QueryCompleteEvent {
+  queryId: QueryId;
+  totalRows: number;
+  durationMs: number;
+  warehouse?: string;
+}
+
+export interface QueryErrorEvent {
+  queryId: QueryId;
+  message: string;
+}
+
 export type SchemaObjectKind = 'table' | 'view' | 'database' | 'schema' | 'column';
 
 export interface SchemaObject {
@@ -125,6 +156,11 @@ export interface SnowboyApi {
   query: {
     run(sessionId: SessionId, sql: string, options?: RunOptions): Promise<QueryId>;
     cancel(queryId: QueryId): Promise<void>;
+  };
+  queryEvents: {
+    onRowBatch(handler: (event: QueryRowBatchEvent) => void): () => void;
+    onComplete(handler: (event: QueryCompleteEvent) => void): () => void;
+    onError(handler: (event: QueryErrorEvent) => void): () => void;
   };
   schema: {
     listDatabases(sessionId: SessionId): Promise<string[]>;

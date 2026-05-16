@@ -51,26 +51,40 @@
     return errors.find(e => e.field === field)?.message;
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!isValid) return;
-    
-    if (profile) {
-      profiles.update(profile.id, currentInput);
-    } else {
-      profiles.add(currentInput);
+
+    try {
+      if (profile) {
+        await profiles.update(profile.id, currentInput);
+      } else {
+        await profiles.add(currentInput);
+      }
+      onSave();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save profile');
     }
-    onSave();
   }
 
   async function handleSaveAndConnect() {
     if (!isValid) return;
-    
+
     let savedProfile: ConnectionProfile;
-    if (profile) {
-      profiles.update(profile.id, currentInput);
-      savedProfile = profiles.list.find(p => p.id === profile!.id)!;
-    } else {
-      savedProfile = profiles.add(currentInput);
+    try {
+      if (profile) {
+        await profiles.update(profile.id, currentInput);
+        const found = profiles.list.find(p => p.id === profile!.id);
+        if (!found) {
+          toast.error('Saved profile vanished after refresh');
+          return;
+        }
+        savedProfile = found;
+      } else {
+        savedProfile = await profiles.add(currentInput);
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save profile');
+      return;
     }
 
     isTesting = true;

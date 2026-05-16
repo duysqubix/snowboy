@@ -2,6 +2,8 @@ import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpc } from './ipc/index';
+import { closeDatabase, openDatabase } from './storage/db';
+import { EMBEDDED_MIGRATIONS } from './storage/embedded-migrations';
 
 console.log('[main] snowboy starting');
 
@@ -89,6 +91,8 @@ function createWindow(): void {
 
 void app.whenReady().then(async () => {
   await smokeLoadNatives();
+  openDatabase({ migrations: EMBEDDED_MIGRATIONS });
+  console.log('[main] storage ready');
   registerIpc();
   createWindow();
   app.on('activate', () => {
@@ -96,6 +100,10 @@ void app.whenReady().then(async () => {
       createWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  closeDatabase();
 });
 
 app.on('window-all-closed', () => {

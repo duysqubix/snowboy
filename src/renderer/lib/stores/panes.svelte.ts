@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import type { LayoutTree } from '../../../main/types';
+import { getPaneState } from '../panes/paneStore.svelte';
 
 export function createPaneTree() {
   const initialPaneId = nanoid();
@@ -157,12 +158,22 @@ export function createPaneTree() {
     activePaneId = newPaneId;
   }
 
+  function setActivePaneSql(sql: string): boolean {
+    if (!activePaneId) return false;
+    const state = getPaneState(activePaneId);
+    if (state === null) return false;
+    state.body = sql;
+    state.dirty = true;
+    return true;
+  }
+
   return {
     get tree() { return tree; },
     get activePaneId() { return activePaneId; },
     splitActive,
     closeActive,
     setActive,
+    setActivePaneSql,
     reset
   };
 }

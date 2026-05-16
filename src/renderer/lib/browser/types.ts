@@ -12,4 +12,7 @@ export interface BrowserNode {
   schema?: string;
   dataType?: string;
   nullable?: boolean;
+  comment?: string;
 }
+
+export type LoadChildren = (node: BrowserNode) => Promise<BrowserNode[]>;

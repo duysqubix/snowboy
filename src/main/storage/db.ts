@@ -44,6 +44,11 @@ export interface OpenDatabaseOptions {
   path?: string;
   /** Override the migrations directory (mainly for build/testing flexibility). */
   migrationsDir?: string;
+  /**
+   * Pre-loaded migrations map (used by the production main bundle). When
+   * provided, `migrationsDir` is ignored. See `runMigrations` for shape.
+   */
+  migrations?: Record<string, string>;
 }
 
 type DatabaseConstructor = new (filename: string) => Database;
@@ -65,7 +70,10 @@ export function openDatabase(opts: OpenDatabaseOptions = {}): Database {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA synchronous = NORMAL');
 
-  runMigrations(db, { migrationsDir: opts.migrationsDir });
+  runMigrations(db, {
+    migrationsDir: opts.migrationsDir,
+    migrations: opts.migrations
+  });
 
   currentDb = db;
   return db;

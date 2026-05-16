@@ -1,6 +1,11 @@
 <script lang="ts">
   import { createTable, FlexRender } from '@tanstack/svelte-table';
-  import { createCoreRowModel, type ColumnDef, type ColumnResizeMode } from '@tanstack/table-core';
+  import {
+    createCoreRowModel,
+    stockFeatures,
+    type ColumnDef,
+    type ColumnResizeMode
+  } from '@tanstack/table-core';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { LoaderCircle, Download } from 'lucide-svelte';
   import { classifyType, formatCell } from './columnTypes';
@@ -64,9 +69,10 @@
   );
 
   const table = createTable({
+    _features: stockFeatures,
+    _rowModels: { coreRowModel: createCoreRowModel() },
     get data() { return rows; },
     get columns() { return tableColumns; },
-    getCoreRowModel: createCoreRowModel(),
     columnResizeMode: 'onChange' as ColumnResizeMode,
     state: {
       get columnSizing() { return columnSizing; }
@@ -209,7 +215,7 @@
                   style="width: {header.getSize()}px; text-align: {header.column.columnDef.meta?.isNumeric ? 'right' : 'left'}"
                 >
                   {#if !header.isPlaceholder}
-                    <FlexRender content={header.column.columnDef.header} context={header.getContext()} />
+                    <FlexRender header={header} />
                   {/if}
                   
                   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -233,6 +239,7 @@
           {#each $virtualizer.getVirtualItems() as virtualRow (virtualRow.index)}
             {@const row = table.getRowModel().rows[virtualRow.index]}
             {@const isSelected = selectedRowIndices.has(virtualRow.index)}
+            {#if row}
             <tr
               class="absolute top-0 left-0 w-full border-b border-border hover:bg-muted/50 cursor-pointer transition-colors {isSelected ? 'bg-accent hover:bg-accent/80' : ''}"
               style="height: {virtualRow.size}px; transform: translateY({virtualRow.start}px)"
@@ -265,6 +272,7 @@
                 </td>
               {/each}
             </tr>
+            {/if}
           {/each}
         </tbody>
       </table>

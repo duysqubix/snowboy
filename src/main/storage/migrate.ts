@@ -31,6 +31,14 @@ export interface RunMigrationsOptions {
    * alongside the bundled main module.
    */
   migrationsDir?: string;
+  /**
+   * Pre-loaded `version → SQL` map. Bypasses the `migrationsDir` disk scan
+   * entirely. Used by the production main bundle (which loads SQL via
+   * Vite's `?raw` import so the bundled `out/main/index.js` carries the
+   * DDL inline, with no sibling `migrations/` directory required).
+   * When provided, `migrationsDir` is ignored.
+   */
+  migrations?: Record<string, string>;
 }
 
 interface MigrationRow {
@@ -41,8 +49,6 @@ export function runMigrations(
   db: BetterSqlite3.Database,
   opts: RunMigrationsOptions = {}
 ): void {
-  const dir = opts.migrationsDir ?? DEFAULT_MIGRATIONS_DIR;
-
   db.exec(
     'CREATE TABLE IF NOT EXISTS schema_migrations (' +
       'version TEXT PRIMARY KEY, ' +
@@ -53,24 +59,29 @@ export function runMigrations(
   const appliedRows = db.prepare('SELECT version FROM schema_migrations').all() as MigrationRow[];
   const applied = new Set(appliedRows.map((r) => r.version));
 
-  const files = readdirSync(dir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort();
-
   const recordStmt = db.prepare(
     'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)'
   );
 
-  for (const file of files) {
-    const version = file.replace(/\.sql$/, '');
+  const pending = opts.migrations
+    ? Object.entries(opts.migrations).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    : loadFromDisk(opts.migrationsDir ?? DEFAULT_MIGRATIONS_DIR);
+
+  for (const [version, sql] of pending) {
     if (applied.has(version)) {
       continue;
     }
-    const sql = readFileSync(join(dir, file), 'utf8');
     const tx = db.transaction(() => {
       db.exec(sql);
       recordStmt.run(version, Date.now());
     });
     tx();
   }
+}
+
+function loadFromDisk(dir: string): Array<[string, string]> {
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()
+    .map((file) => [file.replace(/\.sql$/, ''), readFileSync(join(dir, file), 'utf8')]);
 }

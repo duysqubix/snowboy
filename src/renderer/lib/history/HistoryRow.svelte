@@ -48,11 +48,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      if (onRestore) {
-        onRestore(entry.sql);
-      } else {
-        console.log(entry.sql);
-      }
+      onRestore?.(entry.sql);
     }
   }
 </script>
@@ -61,7 +57,7 @@
   class="flex flex-col gap-1 p-3 border-b hover:bg-muted/50 cursor-pointer transition-colors"
   role="button"
   tabindex="0"
-  onclick={() => onRestore ? onRestore(entry.sql) : console.log(entry.sql)}
+  onclick={() => onRestore?.(entry.sql)}
   onkeydown={handleKeydown}
 >
   <div class="flex items-center justify-between gap-2">

@@ -19,6 +19,11 @@ export const CHANNELS = {
     run: 'query.run',
     cancel: 'query.cancel'
   },
+  queryEvents: {
+    rowBatch: 'query.row-batch',
+    complete: 'query.complete',
+    error: 'query.error'
+  },
   schema: {
     listDatabases: 'schema.list-databases',
     listSchemas: 'schema.list-schemas',
