@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { EditorState, StateEffect } from '@codemirror/state';
-  import { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
+  import {
+    EditorView,
+    keymap,
+    lineNumbers,
+    drawSelection,
+    highlightActiveLine,
+    highlightActiveLineGutter,
+    placeholder as placeholderExt
+  } from '@codemirror/view';
   import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
   import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
   import { autocompletion, completionKeymap, CompletionContext } from '@codemirror/autocomplete';
@@ -25,7 +33,7 @@
     onChange,
     theme = 'light',
     readOnly = false,
-    placeholder = 'SELECT current_role();'
+    placeholder = '-- Write SQL here, then Run or press Ctrl+Enter'
   }: SqlEditorProps = $props();
 
   let editorContainer: HTMLDivElement;
@@ -51,7 +59,7 @@
 
   onMount(() => {
     const state = EditorState.create({
-      doc: value || placeholder,
+      doc: value,
       extensions: [
         lineNumbers(),
         highlightActiveLineGutter(),
@@ -63,6 +71,7 @@
         highlightActiveLine(),
         highlightSelectionMatches(),
         lintGutter(),
+        placeholderExt(placeholder),
         keymap.of([
           ...defaultKeymap,
           ...searchKeymap,
@@ -118,6 +127,7 @@
           highlightActiveLine(),
           highlightSelectionMatches(),
           lintGutter(),
+          placeholderExt(placeholder),
           keymap.of([
             ...defaultKeymap,
             ...searchKeymap,

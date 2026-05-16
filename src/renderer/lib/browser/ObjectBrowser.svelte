@@ -307,7 +307,7 @@
   }
 </script>
 
-<div class="flex flex-col h-full w-full border-r bg-background">
+<div class="flex flex-col h-full w-full bg-background">
   <div class="p-2 border-b">
     <div class="relative">
       <Search class="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -315,7 +315,6 @@
         placeholder="Search objects..."
         class="pl-8 h-9"
         bind:value={searchQuery}
-        disabled={sessionStatus !== 'ready' || rootError !== null}
       />
     </div>
     {#if activeProfile !== null}

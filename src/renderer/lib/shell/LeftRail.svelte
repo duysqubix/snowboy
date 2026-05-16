@@ -13,6 +13,6 @@
   }
 </script>
 
-<div class="h-full w-full bg-background border-r border-border">
+<div class="h-full w-full bg-background">
   <ObjectBrowser onInsertSql={handleInsertSql} />
 </div>
