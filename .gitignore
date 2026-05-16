@@ -29,3 +29,5 @@ playwright/.cache/
 coverage/
 
 *.tsbuildinfo
+
+.sisyphus/run-continuation/

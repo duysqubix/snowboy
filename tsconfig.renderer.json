@@ -27,5 +27,10 @@
     "tsBuildInfoFile": "out/.types/renderer.tsbuildinfo",
     "types": []
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.d.ts", "src/renderer/**/*.svelte"]
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.d.ts",
+    "src/renderer/**/*.svelte",
+    "src/main/types.ts"
+  ]
 }

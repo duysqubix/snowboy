@@ -67,7 +67,7 @@ function createWindow(): void {
 
   win.once('ready-to-show', () => {
     win.show();
-    if (!app.isPackaged) {
+    if (!app.isPackaged && !process.env['SNOWBOY_DISABLE_DEVTOOLS']) {
       win.webContents.openDevTools({ mode: 'right' });
     }
   });

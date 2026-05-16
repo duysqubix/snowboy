@@ -1,6 +1,18 @@
 <script lang="ts">
+  import ObjectBrowser from '$lib/browser/ObjectBrowser.svelte';
+  import { toast } from 'svelte-sonner';
+
+  let { onInsertSql }: { onInsertSql?: (sql: string) => void } = $props();
+
+  function handleInsertSql(sql: string) {
+    if (onInsertSql) {
+      onInsertSql(sql);
+    } else {
+      toast.info('Insert pending — Wave 3 wires this up', { description: sql });
+    }
+  }
 </script>
 
-<div class="h-full w-full flex items-center justify-center bg-muted/30 text-muted-foreground text-sm">
-  Object browser (not connected)
+<div class="h-full w-full bg-background border-r border-border">
+  <ObjectBrowser onInsertSql={handleInsertSql} />
 </div>

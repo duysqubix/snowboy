@@ -1,59 +1,53 @@
 <script lang="ts">
-  import * as Select from "$lib/components/ui/select";
-  import { Button } from "$lib/components/ui/button";
+  import * as Select from '$lib/components/ui/select';
+  import { Button } from '$lib/components/ui/button';
+  import { History, Plug } from 'lucide-svelte';
+  import { profiles } from '$lib/stores/profiles.svelte';
+
+  let {
+    onOpenConnections,
+    onToggleHistory
+  }: {
+    onOpenConnections: () => void;
+    onToggleHistory: () => void;
+  } = $props();
+
+  let activeProfileId = $derived(profiles.activeProfileId ?? '');
 </script>
 
 <div class="flex h-12 items-center px-4 border-b border-border bg-background shrink-0">
   <h1 class="font-semibold text-lg mr-8">Snowboy</h1>
-  
-  <div class="flex items-center gap-2 flex-1">
-    <Select.Root type="single">
-      <Select.Trigger class="w-[140px] h-8">
-        Select profile...
-      </Select.Trigger>
-      <Select.Content>
-        <Select.Item value="default">Default</Select.Item>
-      </Select.Content>
-    </Select.Root>
 
-    <Select.Root type="single">
-      <Select.Trigger class="w-[140px] h-8">
-        Select role...
+  <div class="flex min-w-0 flex-1 items-center gap-2">
+    <Select.Root
+      type="single"
+      value={activeProfileId}
+      onValueChange={(v) => profiles.setActive(v || null)}
+    >
+      <Select.Trigger class="h-8 w-[180px] shrink-0 text-xs">
+        {profiles.list.find((p) => p.id === activeProfileId)?.name ?? 'Select profile...'}
       </Select.Trigger>
       <Select.Content>
-        <Select.Item value="sysadmin">SYSADMIN</Select.Item>
-      </Select.Content>
-    </Select.Root>
-
-    <Select.Root type="single">
-      <Select.Trigger class="w-[140px] h-8">
-        Select warehouse...
-      </Select.Trigger>
-      <Select.Content>
-        <Select.Item value="compute_wh">COMPUTE_WH</Select.Item>
-      </Select.Content>
-    </Select.Root>
-
-    <Select.Root type="single">
-      <Select.Trigger class="w-[140px] h-8">
-        Select database...
-      </Select.Trigger>
-      <Select.Content>
-        <Select.Item value="snowboy_db">SNOWBOY_DB</Select.Item>
-      </Select.Content>
-    </Select.Root>
-
-    <Select.Root type="single">
-      <Select.Trigger class="w-[140px] h-8">
-        Select schema...
-      </Select.Trigger>
-      <Select.Content>
-        <Select.Item value="public">PUBLIC</Select.Item>
+        {#each profiles.list as p (p.id)}
+          <Select.Item value={p.id}>{p.name}</Select.Item>
+        {/each}
       </Select.Content>
     </Select.Root>
   </div>
 
-  <div class="flex items-center justify-end w-32">
-    <Button variant="outline" size="sm">Action</Button>
+  <div class="ml-2 flex shrink-0 items-center gap-2">
+    <Button
+      variant="ghost"
+      size="sm"
+      class="h-8"
+      title="Query history (Ctrl+H)"
+      onclick={onToggleHistory}
+    >
+      <History class="h-4 w-4" />
+    </Button>
+    <Button variant="outline" size="sm" class="h-8" onclick={onOpenConnections}>
+      <Plug class="h-4 w-4" />
+      Connect
+    </Button>
   </div>
 </div>

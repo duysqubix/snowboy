@@ -6,9 +6,32 @@
 
 The v0.1 MVP must deliver a single-account Snowflake IDE that fixes the user's primary pain point — **inability to view two queries side-by-side** — by shipping an SSMS-style multi-pane workspace from day one.
 
-**Working directory**: `/home/duys/.repos/snowboy/` (greenfield, no existing code, not yet a git repo)
+**Active working directory**: `C:\Users\duan_\.repos\snowboy` (Windows-native, primary going forward — Windows opencode session)
+**Mirror**: `/home/duys/.repos/snowboy` (WSL2; may drift from canonical; rsync'd at commit `8154ca2`)
 **Target audience (v0.1)**: Personal tool. Public OSS positioning happens post-alpha once core UX is proven.
 **Platforms**: Linux, Windows, macOS (all three via electron-builder).
+
+---
+
+## 🟢 Current status (handoff snapshot)
+
+| Wave | Status | Latest commit | Notes |
+|---|---|---|---|
+| Wave 0 — bootstrap | ✅ Complete | `343af55` | T0.1 repo scaffold, T0.2 native module gate (snowflake-sdk + better-sqlite3 rebuilt under Electron 32 ABI), T0.3 Playwright visual smoke test |
+| Wave 1 — foundation | ✅ Complete | `8154ca2` | T1.1 typed IPC, T1.2 safeStorage, T1.3 SQLite + 5-table schema + migrations, T1.4 Snowflake driver (Session + Pool + 3 auth flows + streaming), T1.5+T1.6 shadcn-svelte v2 (13 components) + app shell. Wall-clock ~25 min via 5 parallel sub-agents. |
+| **Wave 2 — UI components** | ⏳ **Next** | — | 8 tasks (T2.1–T2.8). See §13 for recommended parallel grouping. |
+| Wave 3 — wiring | ⏳ Pending | — | 7 tasks (T3.1–T3.7) — first wave that actually moves data through the stack |
+| Wave 4 — persistence & polish | ⏳ Pending | — | 5 tasks (T4.1–T4.5) |
+| Wave 5 — packaging & release | ⏳ Pending | — | 5 tasks (T5.1–T5.5) |
+
+**Known decisions made post-plan**:
+- Renderer entry is `src/renderer/index.html` (not `app.html`) — Vite dev server needs the conventional name to serve at `/`.
+- `svelte.config.js` does **not** set `compilerOptions.runes: true`. Svelte 5's per-file auto-detection is used so shadcn-svelte v2's mixed-mode components keep working. All hand-written code MUST use runes.
+- `snowflake-promise` was **not** installed (was missing from initial `bun add` in T0.2). T1.4 rolled a small in-house promise wrapper around `snowflake-sdk`'s callback API. Cleaner — no abandoned-lib dependency.
+- `bun test` is scoped to `./tests/unit/` (not the project root) so Playwright Electron specs in `tests/e2e/specs/` aren't picked up as unit tests.
+- `bunfig.toml` uses `linker = "hoisted"` — required for `@electron/rebuild` to find native modules during postinstall.
+
+**Acceptance gates (re-runnable)**: `bun run typecheck`, `bun run lint`, `bun run test` (53 unit tests, 1 skip, 0 fail at latest), `bun run test:e2e` (visual smoke gate, ~20s).
 
 ---
 
@@ -987,3 +1010,64 @@ For SSO: a "Connect" button on the profile invokes the externalbrowser flow.
 All 11 acceptance criteria in section 2 verified manually on Linux and Windows. Build artifacts published as a GitHub Release. README sufficient for cold install. No P0 bugs in the issue tracker. Personal-use dogfooding has happened for at least one week without crashes.
 
 After v0.1 ships, the project transitions to public OSS: announce on r/snowflake + Hacker News, accept community issues, set up a roadmap for v0.2.
+
+---
+
+## 13. Wave 2 — recommended parallel grouping (next up)
+
+Wave 2 is 8 tasks but several share files. Fire **7 sub-agents** (T2.1 + T2.4 combined into one) to keep parallelism without write races:
+
+| Bucket | Tasks | File ownership |
+|---|---|---|
+| **A (combined)** | T2.1 WorksheetPane + T2.4 Split-pane system | Both write to `src/renderer/lib/panes/`. One agent does both serially: first WorksheetPane.svelte, then PaneTree.svelte + panes store + keymap utils. |
+| **B** | T2.2 CodeMirror 6 + Snowflake dialect | `src/renderer/lib/editor/` |
+| **C** | T2.3 Results grid (TanStack svelte-table + virtualization) | `src/renderer/lib/results/` |
+| **D** | T2.5 Tab system | `src/renderer/lib/shell/TabBar.svelte`, `src/renderer/lib/stores/tabs.ts`. **Owns the final `App.svelte` composition** that wires Tabs → PaneTree → WorksheetPane. |
+| **E** | T2.6 Object browser tree | `src/renderer/lib/browser/` |
+| **F** | T2.7 Query history panel | `src/renderer/lib/history/` |
+| **G** | T2.8 Connection wizard + profile list | `src/renderer/lib/connections/`, `src/renderer/lib/stores/profiles.ts` |
+
+**Strict rules to put in each Wave 2 sub-agent prompt:**
+- Bucket A is the ONLY task that touches `src/renderer/lib/panes/`.
+- Bucket D is the ONLY task that touches `src/renderer/App.svelte`. Other buckets just export components; D imports them.
+- NO task adds dependencies to `package.json` except for explicitly-allowed additions (TanStack svelte-table for C, `@codemirror/*` packages for B, etc.). Pre-install them in the orchestration turn if collision risk concerns you.
+- Every task MUST keep the e2e smoke test green. They may update text assertions but not weaken the gate.
+- Every task MUST keep `bun run typecheck`, `bun run lint`, `bun test` green.
+- Tasks that compose into the shell (Bucket A, D) MUST use placeholder data — Wave 3 wires real data.
+
+**Estimated wall-clock**: ~25–35 min (Bucket A is the longest because it does two tasks; Bucket D is the second longest because it composes everything into App.svelte and updates the smoke test text).
+
+After Wave 2: visual proof should be a workspace with at least one tab, at least one pane, a CodeMirror editor in the pane (with no data wired), a placeholder results grid, an object browser with mock tree data, a history panel with mock entries, and a working connection-wizard modal. Nothing connects to Snowflake yet — that's Wave 3.
+
+---
+
+## 14. Development environment
+
+**Active dev box**: Windows (opencode running natively, working dir `C:\Users\duan_\.repos\snowboy`).
+**Toolchain**:
+- Bun 1.3.9+ (`irm bun.com/install.ps1 | iex`)
+- Electron 32.x (auto-installed via `bun install`)
+- Visual Studio 2022 Build Tools with C++ desktop development workload — required for `better-sqlite3` native compilation. Install: `winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"`
+- Python 3.x (auto-present on modern Windows; node-gyp prerequisite)
+- Git for Windows (any recent version)
+
+**Git config locked on the Windows clone** (already applied):
+- `core.filemode = false` (NTFS exposes everything as `777`; ignore mode diffs)
+- `core.autocrlf = false`
+- `core.eol = lf`
+
+**WSL mirror** at `/home/duys/.repos/snowboy` is no longer canonical. Don't dual-edit. If WSL state ever needs to catch up, `git pull` from a shared remote once one is set up (currently no remote).
+
+**Bunfig**: `bunfig.toml` sets `linker = "hoisted"`. Required for `@electron/rebuild` to find native modules during postinstall. Do not change to `isolated`.
+
+**Common commands**:
+```
+bun install              # installs + auto-runs postinstall rebuild
+bun run dev              # electron-vite dev server, opens window
+bun run build            # production bundle
+bun run typecheck        # tsc + svelte-check
+bun run lint             # eslint
+bun test                 # bun unit tests (scoped to tests/unit/)
+bun run test:e2e         # playwright Electron smoke
+bun run rebuild          # explicit native-module rebuild (rarely needed)
+```
