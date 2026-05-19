@@ -9,7 +9,13 @@ export class PaneStateFacade {
   dirty = $state<boolean>(false);
   body = $state<string>('');
   title = $state<string>('Untitled');
-  currentQueryId = $state<QueryId | null>(null);
+  currentQueryIds = $state<QueryId[]>([]);
+  currentStatements = $state<string[]>([]);
+  activeResultIndex = $state<number>(0);
+
+  get currentQueryId(): QueryId | null {
+    return this.currentQueryIds[this.activeResultIndex] ?? null;
+  }
 }
 
 const registry = new SvelteMap<string, PaneStateFacade>();

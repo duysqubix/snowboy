@@ -212,9 +212,7 @@ export class Session {
       queryIdPromise,
     };
 
-    const params: Record<string, unknown> = {
-      MULTI_STATEMENT_COUNT: 0
-    };
+    const params: Record<string, unknown> = {};
     if (opts.timeoutMs !== undefined && opts.timeoutMs > 0) {
       params['STATEMENT_TIMEOUT_IN_SECONDS'] = Math.max(1, Math.floor(opts.timeoutMs / 1000));
     }

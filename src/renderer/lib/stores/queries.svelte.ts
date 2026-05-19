@@ -78,6 +78,34 @@ class QueriesStore {
     this.#pending.delete(queryId);
   }
 
+  waitForCompletion(queryId: QueryId): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const state = this.#map.get(queryId);
+      if (state !== undefined) {
+        if (state.status === 'success') {
+          resolve();
+          return;
+        }
+        if (state.status === 'error' || state.status === 'cancelled') {
+          reject(new Error(state.error ?? state.status));
+          return;
+        }
+      }
+      const offComplete = snowboy.queryEvents.onComplete((event) => {
+        if (event.queryId !== queryId) return;
+        offComplete();
+        offError();
+        resolve();
+      });
+      const offError = snowboy.queryEvents.onError((event) => {
+        if (event.queryId !== queryId) return;
+        offComplete();
+        offError();
+        reject(new Error(event.message));
+      });
+    });
+  }
+
   private handleBatch(event: QueryRowBatchEvent): void {
     const state = this.ensureState(event.queryId);
     if (state.columns.length === 0 && event.columns.length > 0) {

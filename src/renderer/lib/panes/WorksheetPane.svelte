@@ -10,7 +10,8 @@
   import * as Select from '../components/ui/select';
   import { Button } from '../components/ui/button';
   import SqlEditor from '../editor/SqlEditor.svelte';
-  import ResultsGrid from '../results/ResultsGrid.svelte';
+  import { splitSql } from '../editor/splitSql';
+  import ResultsTabs from '../results/ResultsTabs.svelte';
 
   let { paneId }: { paneId: string } = $props();
 
@@ -21,20 +22,11 @@
 
   let isActive = $derived(panes.activePaneId === paneId);
 
-  let queryState = $derived(queries.get(paneState.currentQueryId));
-  let isRunning = $derived(queryState !== null && queryState.status === 'running');
-  let canCancel = $derived(paneState.currentQueryId !== null && isRunning);
-
-  let resultColumns = $derived(
-    queryState?.columns.map((c) => ({ name: c.name, dataType: c.dataType })) ?? []
+  let activeQueryState = $derived(queries.get(paneState.currentQueryId));
+  let isRunning = $derived(
+    paneState.currentQueryIds.some((id) => queries.get(id)?.status === 'running')
   );
-  let resultRows = $derived(queryState?.rows ?? []);
-  let resultLoading = $derived(isRunning);
-  let resultError = $derived(
-    queryState?.status === 'error' || queryState?.status === 'cancelled'
-      ? (queryState.error ?? undefined)
-      : undefined
-  );
+  let canCancel = $derived(activeQueryState?.status === 'running');
 
   let editorTheme = $state<'light' | 'dark'>('dark');
   onMount(() => {
@@ -54,18 +46,35 @@
       toast.error('No active session — open a connection first.');
       return;
     }
-    const sql = paneState.body.trim();
-    if (sql.length === 0) {
+    const fullSql = paneState.body.trim();
+    if (fullSql.length === 0) {
       toast.error('Editor is empty.');
       return;
     }
-    try {
-      const queryId = await snowboy.query.run(sessionId, sql);
-      paneState.currentQueryId = queryId;
-      queries.register(queryId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Query failed: ${message}`);
+    const statements = splitSql(fullSql);
+    if (statements.length === 0) {
+      toast.error('No statements to run.');
+      return;
+    }
+
+    paneState.currentQueryIds = [];
+    paneState.currentStatements = statements;
+    paneState.activeResultIndex = 0;
+
+    for (let i = 0; i < statements.length; i++) {
+      const stmt = statements[i]!;
+      try {
+        const queryId = await snowboy.query.run(sessionId, stmt);
+        queries.register(queryId);
+        paneState.currentQueryIds = [...paneState.currentQueryIds, queryId];
+        paneState.activeResultIndex = i;
+        await queries.waitForCompletion(queryId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const label = statements.length > 1 ? `Statement ${i + 1} failed: ` : '';
+        toast.error(`${label}${message}`);
+        break;
+      }
     }
   }
 
@@ -86,9 +95,14 @@
     return `${(ms / 1000).toFixed(2)}s`;
   }
 
-  let statusRowCount = $derived(queryState?.rows.length ?? null);
-  let statusDuration = $derived(formatDuration(queryState?.durationMs ?? null));
-  let statusWarehouse = $derived(queryState?.warehouse ?? paneState.warehouse ?? null);
+  let statusRowCount = $derived(activeQueryState?.rows.length ?? null);
+  let statusDuration = $derived(formatDuration(activeQueryState?.durationMs ?? null));
+  let statusWarehouse = $derived(activeQueryState?.warehouse ?? paneState.warehouse ?? null);
+  let statusLabel = $derived(
+    paneState.currentQueryIds.length > 1
+      ? `Statement ${paneState.activeResultIndex + 1}/${paneState.currentQueryIds.length} · `
+      : ''
+  );
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -167,26 +181,26 @@
   </div>
 
   <div class="h-[35%] shrink-0 min-h-0">
-    <ResultsGrid
-      columns={resultColumns}
-      rows={resultRows as Record<string, unknown>[]}
-      loading={resultLoading}
-      error={resultError}
+    <ResultsTabs
+      queryIds={paneState.currentQueryIds}
+      statements={paneState.currentStatements}
+      activeIndex={paneState.activeResultIndex}
+      onActiveChange={(i) => (paneState.activeResultIndex = i)}
     />
   </div>
 
   <div class="flex items-center gap-4 px-2 h-6 border-t border-border shrink-0 bg-muted/20">
     <span class="text-[10px] text-muted-foreground">
-      {#if queryState === null}
+      {#if activeQueryState === null}
         Idle
-      {:else if isRunning}
-        Running… {statusRowCount ?? 0} rows
-      {:else if queryState.status === 'success'}
-        {statusRowCount ?? 0} rows · {statusDuration}
-      {:else if queryState.status === 'cancelled'}
-        Cancelled
+      {:else if activeQueryState.status === 'running'}
+        {statusLabel}Running… {statusRowCount ?? 0} rows
+      {:else if activeQueryState.status === 'success'}
+        {statusLabel}{statusRowCount ?? 0} rows · {statusDuration}
+      {:else if activeQueryState.status === 'cancelled'}
+        {statusLabel}Cancelled
       {:else}
-        Error
+        {statusLabel}Error
       {/if}
     </span>
     <span class="text-[10px] text-muted-foreground">
