@@ -5,12 +5,14 @@ import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  clearPasswordForProfile,
   deleteProfile,
+  hasPasswordForProfile,
   listProfiles,
   saveProfile,
+  setPasswordForProfile,
   testConnection,
-  __setSessionFactoryForTesting,
-  __resetSessionFactoryForTesting
+  __setSessionFactoryForTesting
 } from '../../../src/main/ipc/connections';
 import {
   __setSafeStorageForTesting,
@@ -389,5 +391,72 @@ describe('testConnection', () => {
     expect(r.ok).toBe(false);
     expect(r.message).toContain('Cannot reach Snowflake');
     expect(r.message).toContain('Account URL');
+  });
+});
+
+describe('setPasswordForProfile / hasPasswordForProfile / clearPasswordForProfile', () => {
+  test('round-trips a password through safeStorage keyed by profile id', async () => {
+    saveProfile(profileFixture({ authMethod: 'password' }));
+
+    expect(await hasPasswordForProfile('p1')).toBe(false);
+
+    await setPasswordForProfile('p1', 'hunter2');
+
+    expect(await hasPasswordForProfile('p1')).toBe(true);
+    const keys = await listKeys();
+    expect(keys).toContain('profile:p1:password');
+  });
+
+  test('clearPasswordForProfile deletes only the matching key', async () => {
+    saveProfile(profileFixture({ authMethod: 'password' }));
+    await setPasswordForProfile('p1', 'hunter2');
+    await setSecret('other-key', 'unrelated');
+
+    await clearPasswordForProfile('p1');
+
+    expect(await hasPasswordForProfile('p1')).toBe(false);
+    const keys = await listKeys();
+    expect(keys).toContain('other-key');
+    expect(keys).not.toContain('profile:p1:password');
+  });
+
+  test('setPasswordForProfile rejects empty profile id or password', async () => {
+    saveProfile(profileFixture({ authMethod: 'password' }));
+
+    await expect(setPasswordForProfile('', 'hunter2')).rejects.toThrow(
+      /profileId is required/
+    );
+    await expect(setPasswordForProfile('p1', '')).rejects.toThrow(
+      /password must be a non-empty string/
+    );
+  });
+
+  test('setPasswordForProfile rejects unknown profile id', async () => {
+    await expect(setPasswordForProfile('ghost', 'hunter2')).rejects.toThrow(
+      /profile not found/
+    );
+  });
+
+  test('testConnection succeeds after setPasswordForProfile -> session factory receives the password', async () => {
+    saveProfile(profileFixture({ authMethod: 'password' }));
+    await setPasswordForProfile('p1', 'hunter2');
+
+    let receivedPassword: string | undefined;
+    __setSessionFactoryForTesting(async (_lite, _ctx, options) => {
+      receivedPassword = options.password;
+      return makeFakeSession();
+    });
+
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(true);
+    expect(receivedPassword).toBe('hunter2');
+  });
+
+  test('testConnection error message no longer references T3.2', async () => {
+    saveProfile(profileFixture({ authMethod: 'password' }));
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(false);
+    expect(r.message).not.toContain('T3.2');
+    expect(r.message).toContain('Edit the profile and enter your Snowflake password');
   });
 });

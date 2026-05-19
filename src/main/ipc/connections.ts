@@ -44,7 +44,8 @@ import {
 import {
   deleteSecret,
   getSecret,
-  listKeys
+  listKeys,
+  setSecret
 } from '../secrets/safeStorage';
 import {
   Session,
@@ -303,6 +304,34 @@ export async function deleteProfile(id: string): Promise<void> {
   }
 }
 
+export async function setPasswordForProfile(profileId: string, password: string): Promise<void> {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    throw new Error('setPassword: profileId is required');
+  }
+  if (typeof password !== 'string' || password.length === 0) {
+    throw new Error('setPassword: password must be a non-empty string');
+  }
+  if (storageGetProfile(profileId) === null) {
+    throw new Error(`setPassword: profile not found: ${profileId}`);
+  }
+  await setSecret(passwordKey(profileId), password);
+}
+
+export async function clearPasswordForProfile(profileId: string): Promise<void> {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    throw new Error('clearPassword: profileId is required');
+  }
+  await deleteSecret(passwordKey(profileId));
+}
+
+export async function hasPasswordForProfile(profileId: string): Promise<boolean> {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    return false;
+  }
+  const stored = await getSecret(passwordKey(profileId));
+  return stored !== null;
+}
+
 export async function testConnection(profileId: string): Promise<TestResult> {
   const startedAt = Date.now();
 
@@ -348,7 +377,7 @@ export async function testConnection(profileId: string): Promise<TestResult> {
       return {
         ok: false,
         message:
-          'No password stored for this profile. Password capture lands in T3.2 — use SSO (externalbrowser) until then.',
+          'No password stored for this profile. Edit the profile and enter your Snowflake password, then try again.',
         durationMs: Date.now() - startedAt
       };
     }
@@ -405,5 +434,16 @@ export function register(ipcMain: IpcMain): void {
   );
   ipcMain.handle(CHANNELS.connections.test, (_event, profileId: string) =>
     testConnection(profileId)
+  );
+  ipcMain.handle(
+    CHANNELS.connections.setPassword,
+    (_event, profileId: string, password: string) =>
+      setPasswordForProfile(profileId, password)
+  );
+  ipcMain.handle(CHANNELS.connections.clearPassword, (_event, profileId: string) =>
+    clearPasswordForProfile(profileId)
+  );
+  ipcMain.handle(CHANNELS.connections.hasPassword, (_event, profileId: string) =>
+    hasPasswordForProfile(profileId)
   );
 }

@@ -8,7 +8,10 @@ export const CHANNELS = {
     listProfiles: 'connections.list-profiles',
     saveProfile: 'connections.save-profile',
     deleteProfile: 'connections.delete-profile',
-    test: 'connections.test'
+    test: 'connections.test',
+    setPassword: 'connections.set-password',
+    clearPassword: 'connections.clear-password',
+    hasPassword: 'connections.has-password'
   },
   sessions: {
     open: 'sessions.open',

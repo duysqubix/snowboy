@@ -8,7 +8,7 @@
   import type { ConnectionProfile, AuthMethod } from '../../../main/types';
   import { toast } from 'svelte-sonner';
 
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
 
   let {
     profile = null,
@@ -26,12 +26,28 @@
   let accountUrl = $state(untrack(() => profile?.accountUrl || ''));
   let authMethod = $state<AuthMethod>(untrack(() => profile?.authMethod || 'externalbrowser'));
   let username = $state(untrack(() => profile?.username || ''));
+  let password = $state('');
+  let hasExistingPassword = $state(false);
   let defaultRole = $state(untrack(() => profile?.defaultRole || ''));
   let defaultWarehouse = $state(untrack(() => profile?.defaultWarehouse || ''));
   let defaultDatabase = $state(untrack(() => profile?.defaultDatabase || ''));
   let defaultSchema = $state(untrack(() => profile?.defaultSchema || ''));
 
   let isTesting = $state(false);
+
+  let needsPassword = $derived(
+    authMethod === 'password' || authMethod === 'password_mfa'
+  );
+
+  onMount(async () => {
+    if (profile && (profile.authMethod === 'password' || profile.authMethod === 'password_mfa')) {
+      try {
+        hasExistingPassword = await profiles.hasPassword(profile.id);
+      } catch {
+        hasExistingPassword = false;
+      }
+    }
+  });
 
   let currentInput = $derived({
     name,
@@ -44,22 +60,49 @@
     defaultSchema
   });
 
-  let errors = $derived(validateProfile(currentInput));
+  let baseErrors = $derived(validateProfile(currentInput));
+  let passwordError = $derived(
+    needsPassword && !profile && password.trim().length === 0
+      ? 'Password is required for password authentication'
+      : needsPassword && profile && !hasExistingPassword && password.trim().length === 0
+        ? 'No password stored — enter one to enable this profile'
+        : undefined
+  );
+  let errors = $derived(
+    passwordError !== undefined
+      ? [...baseErrors, { field: 'password', message: passwordError }]
+      : baseErrors
+  );
   let isValid = $derived(errors.length === 0);
 
   function getError(field: string): string | undefined {
     return errors.find(e => e.field === field)?.message;
   }
 
+  async function persistPasswordIfPresent(profileId: string): Promise<void> {
+    if (!needsPassword) {
+      return;
+    }
+    if (password.trim().length > 0) {
+      await profiles.setPassword(profileId, password);
+      hasExistingPassword = true;
+      password = '';
+    }
+  }
+
   async function handleSave() {
     if (!isValid) return;
 
     try {
+      let savedId: string;
       if (profile) {
         await profiles.update(profile.id, currentInput);
+        savedId = profile.id;
       } else {
-        await profiles.add(currentInput);
+        const created = await profiles.add(currentInput);
+        savedId = created.id;
       }
+      await persistPasswordIfPresent(savedId);
       onSave();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save profile');
@@ -82,6 +125,7 @@
       } else {
         savedProfile = await profiles.add(currentInput);
       }
+      await persistPasswordIfPresent(savedProfile.id);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save profile');
       return;
@@ -163,6 +207,29 @@
         <p class="text-xs text-destructive">{getError('username')}</p>
       {/if}
     </div>
+
+    {#if needsPassword}
+      <div class="space-y-2">
+        <Label for="password">Password *</Label>
+        <Input
+          id="password"
+          type="password"
+          bind:value={password}
+          placeholder={hasExistingPassword
+            ? 'Leave blank to keep the stored password'
+            : 'Snowflake account password'}
+          autocomplete="current-password"
+        />
+        {#if profile && hasExistingPassword}
+          <p class="text-xs text-muted-foreground">
+            A password is already stored for this profile. Type a new one to replace it.
+          </p>
+        {/if}
+        {#if getError('password')}
+          <p class="text-xs text-destructive">{getError('password')}</p>
+        {/if}
+      </div>
+    {/if}
 
     <div class="grid grid-cols-2 gap-4">
       <div class="space-y-2">

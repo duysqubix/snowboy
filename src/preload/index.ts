@@ -41,7 +41,13 @@ const api = {
     deleteProfile: (id: string): Promise<void> =>
       ipcRenderer.invoke(CHANNELS.connections.deleteProfile, id),
     test: (profileId: string): Promise<TestResult> =>
-      ipcRenderer.invoke(CHANNELS.connections.test, profileId)
+      ipcRenderer.invoke(CHANNELS.connections.test, profileId),
+    setPassword: (profileId: string, password: string): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.connections.setPassword, profileId, password),
+    clearPassword: (profileId: string): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.connections.clearPassword, profileId),
+    hasPassword: (profileId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.connections.hasPassword, profileId)
   },
   sessions: {
     open: (profileId: string, context: SessionContext): Promise<SessionId> =>

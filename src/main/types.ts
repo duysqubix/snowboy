@@ -147,6 +147,9 @@ export interface SnowboyApi {
     saveProfile(p: ConnectionProfile): Promise<{ id: string }>;
     deleteProfile(id: string): Promise<void>;
     test(profileId: string): Promise<TestResult>;
+    setPassword(profileId: string, password: string): Promise<void>;
+    clearPassword(profileId: string): Promise<void>;
+    hasPassword(profileId: string): Promise<boolean>;
   };
   sessions: {
     open(profileId: string, context: SessionContext): Promise<SessionId>;

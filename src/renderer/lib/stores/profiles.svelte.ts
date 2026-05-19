@@ -82,6 +82,18 @@ class ProfilesStore {
       };
     }
   }
+
+  async setPassword(id: string, password: string): Promise<void> {
+    await snowboy.connections.setPassword(id, password);
+  }
+
+  async clearPassword(id: string): Promise<void> {
+    await snowboy.connections.clearPassword(id);
+  }
+
+  async hasPassword(id: string): Promise<boolean> {
+    return await snowboy.connections.hasPassword(id);
+  }
 }
 
 export const profiles = new ProfilesStore();
