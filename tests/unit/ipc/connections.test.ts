@@ -5,12 +5,12 @@ import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  __setSessionFactoryForTesting,
   deleteProfile,
   listProfiles,
   saveProfile,
   testConnection,
-  type SessionFactory
+  __setSessionFactoryForTesting,
+  __resetSessionFactoryForTesting
 } from '../../../src/main/ipc/connections';
 import {
   __setSafeStorageForTesting,
@@ -346,5 +346,48 @@ describe('testConnection', () => {
     const r = await testConnection('p1');
     expect(r.ok).toBe(false);
     expect(r.message).toBe('string-error-not-an-Error-instance');
+  });
+
+  test('Snowflake 390190 (no SSO configured) -> friendly hint about switching auth method', async () => {
+    saveProfile(profileFixture({ authMethod: 'externalbrowser' }));
+
+    __setSessionFactoryForTesting(async () => {
+      throw new Error(
+        'Authentication failed. Error code: 390190, message: There was an error related to the SAML Identity Provider account parameter. Contact Snowflake support.'
+      );
+    });
+
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('does not have SSO');
+    expect(r.message).toContain('Password');
+    expect(r.message).not.toContain('Contact Snowflake support');
+  });
+
+  test('Snowflake 390100 (bad password) -> friendly hint', async () => {
+    saveProfile(profileFixture({ authMethod: 'password' }));
+    await setSecret('profile:p1:password', 'secret');
+
+    __setSessionFactoryForTesting(async () => {
+      throw new Error('Error code: 390100, Incorrect username or password.');
+    });
+
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('Incorrect username or password');
+    expect(r.message).toContain('Double-check');
+  });
+
+  test('DNS error -> friendly hint about the Account URL', async () => {
+    saveProfile(profileFixture({ authMethod: 'externalbrowser' }));
+
+    __setSessionFactoryForTesting(async () => {
+      throw new Error('getaddrinfo ENOTFOUND nonsense.snowflakecomputing.com');
+    });
+
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('Cannot reach Snowflake');
+    expect(r.message).toContain('Account URL');
   });
 });

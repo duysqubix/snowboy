@@ -60,6 +60,52 @@ const TEST_QUERY_SQL = 'SELECT CURRENT_ROLE() AS ROLE';
 const TEST_QUERY_TIMEOUT_MS = 30_000;
 
 /**
+ * Translates known-confusing Snowflake error codes into actionable messages.
+ * The codes Snowflake returns are stable across SDK versions, but the raw
+ * messages tell users to "Contact Snowflake support" — not useful when the
+ * fix is on the user's side (wrong auth method, missing role, etc.).
+ *
+ * Pattern: detect the code in the raw error text, return a replacement
+ * message that explains the cause + next step. Falls through to the raw
+ * message when nothing matches.
+ */
+function snowflakeErrorHint(raw: string): string {
+  if (raw.includes('390190') || raw.includes('SAML Identity Provider account parameter')) {
+    return (
+      'This Snowflake account does not have SSO (SAML) configured, so ' +
+      'externalbrowser authentication cannot be used. Switch the profile to ' +
+      'Password or Password+MFA, or configure SAML SSO in Snowflake first ' +
+      '(see https://docs.snowflake.com/en/user-guide/admin-security-fed-auth-overview).'
+    );
+  }
+  if (raw.includes('390100') || raw.includes('Incorrect username or password')) {
+    return (
+      'Incorrect username or password. Double-check the username on the ' +
+      'profile and the stored password.'
+    );
+  }
+  if (raw.includes('390101') || raw.includes('User is locked')) {
+    return (
+      'This Snowflake user is locked. An account admin needs to unlock the ' +
+      'user before sign-in can succeed.'
+    );
+  }
+  if (raw.includes('390114') || raw.includes('JWT token is invalid')) {
+    return (
+      'The Snowflake JWT for key-pair auth is invalid or expired. Re-register ' +
+      'the public key on the user, or regenerate the key pair.'
+    );
+  }
+  if (raw.includes('ENOTFOUND') || raw.includes('getaddrinfo')) {
+    return (
+      'Cannot reach Snowflake. Check the Account URL on the profile and ' +
+      'confirm the host resolves.'
+    );
+  }
+  return raw;
+}
+
+/**
  * Session factory shape — matches `Session.open`. The indirection exists
  * so unit tests can inject a stub that never touches snowflake-sdk; in
  * production this resolves to `Session.open.bind(Session)`.
@@ -326,9 +372,10 @@ export async function testConnection(profileId: string): Promise<TestResult> {
       durationMs: Date.now() - startedAt
     };
   } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      message: err instanceof Error ? err.message : String(err),
+      message: snowflakeErrorHint(raw),
       durationMs: Date.now() - startedAt
     };
   } finally {
