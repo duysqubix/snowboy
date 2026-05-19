@@ -21,6 +21,16 @@ import type { SessionContext, SessionId } from '../../../main/types';
 import { snowboy } from '../ipc/client';
 import { profiles } from './profiles.svelte';
 
+function needsMfaPrompt(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('requires an mfa passcode') ||
+    m.includes('mfa with totp is required') ||
+    m.includes('mfa code') ||
+    m.includes('totp passcode')
+  );
+}
+
 interface SessionEntry {
   sessionId: SessionId;
   openedAt: number;
@@ -69,31 +79,32 @@ class SessionsStore {
       return;
     }
 
-    const profile = profiles.list.find((p) => p.id === profileId);
-    if (profile && profile.authMethod === 'password_mfa') {
-      this.#status = 'needs-mfa';
-      this.#lastError = null;
-      return;
-    }
-
     if (this.#pendingProfileId === profileId) return;
     this.#pendingProfileId = profileId;
     this.#status = 'opening';
     this.#lastError = null;
     const initialContext: SessionContext = {};
+    const profile = profiles.list.find((p) => p.id === profileId);
+    const isMfa = profile?.authMethod === 'password_mfa';
+
     try {
       const sessionId = await snowboy.sessions.open(profileId, initialContext);
-      // Bail if the active profile changed mid-open — keep the freshly
-      // opened session in the map (so a switch-back is instant) but
-      // don't promote it to active.
       this.#byProfile.set(profileId, { sessionId, openedAt: Date.now() });
       if (this.#activeProfileId === profileId) {
         this.#status = 'ready';
       }
     } catch (err) {
-      this.#lastError = err instanceof Error ? err.message : String(err);
-      if (this.#activeProfileId === profileId) {
-        this.#status = 'error';
+      const message = err instanceof Error ? err.message : String(err);
+      if (isMfa && needsMfaPrompt(message)) {
+        if (this.#activeProfileId === profileId) {
+          this.#status = 'needs-mfa';
+          this.#lastError = null;
+        }
+      } else {
+        this.#lastError = message;
+        if (this.#activeProfileId === profileId) {
+          this.#status = 'error';
+        }
       }
     } finally {
       if (this.#pendingProfileId === profileId) {

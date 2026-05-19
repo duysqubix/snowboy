@@ -74,7 +74,11 @@ export function buildConnectOptions(
 
   switch (profile.authMethod) {
     case 'externalbrowser':
-      return { ...base, authenticator: 'EXTERNALBROWSER' };
+      return {
+        ...base,
+        authenticator: 'EXTERNALBROWSER',
+        clientStoreTemporaryCredential: true,
+      };
 
     case 'password_mfa': {
       if (profile.username === undefined || profile.username === '') {
@@ -88,6 +92,7 @@ export function buildConnectOptions(
         authenticator: 'USERNAME_PASSWORD_MFA',
         username: profile.username,
         password,
+        clientRequestMfaToken: true,
       };
       if (passcode !== undefined && passcode !== '') {
         mfaOpts['passcode'] = passcode;
