@@ -4,7 +4,7 @@
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { profiles } from '../stores/profiles.svelte';
-  import { validateProfile } from './validation';
+  import { normalizeAccountUrl, validateProfile } from './validation';
   import type { ConnectionProfile, AuthMethod } from '../../../main/types';
   import { toast } from 'svelte-sonner';
 
@@ -35,7 +35,7 @@
 
   let currentInput = $derived({
     name,
-    accountUrl,
+    accountUrl: normalizeAccountUrl(accountUrl),
     authMethod,
     username,
     defaultRole,

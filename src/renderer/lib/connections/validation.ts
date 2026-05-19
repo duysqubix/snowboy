@@ -2,6 +2,22 @@ import type { ConnectionProfile } from '../../../main/types';
 
 export type ValidationError = { field: string; message: string };
 
+/**
+ * Strips the things users routinely paste into the Account URL field that
+ * Snowflake's SDK rejects: protocol prefix, trailing slash/path, any
+ * whitespace (including Unicode no-break / zero-width), and case.
+ * Returns the host-only form used by the snowflake-sdk `account` option.
+ */
+export function normalizeAccountUrl(raw: string): string {
+  return raw
+    .replace(/[\s\u00A0\u200B-\u200D\uFEFF]+/g, '')
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .toLowerCase();
+}
+
+const ACCOUNT_URL_REGEX = /^[a-z0-9_-]+(\.[a-z0-9_-]+)*\.snowflakecomputing\.com$/;
+
 export function validateProfile(input: Partial<ConnectionProfile>): ValidationError[] {
   const errors: ValidationError[] = [];
 
@@ -14,9 +30,13 @@ export function validateProfile(input: Partial<ConnectionProfile>): ValidationEr
   if (!input.accountUrl || input.accountUrl.trim().length === 0) {
     errors.push({ field: 'accountUrl', message: 'Account URL is required' });
   } else {
-    const accountUrlRegex = /^[a-z0-9-]+(\.[a-z0-9-]+)?\.snowflakecomputing\.com$/i;
-    if (!accountUrlRegex.test(input.accountUrl)) {
-      errors.push({ field: 'accountUrl', message: 'Invalid Account URL format' });
+    const normalized = normalizeAccountUrl(input.accountUrl);
+    if (!ACCOUNT_URL_REGEX.test(normalized)) {
+      errors.push({
+        field: 'accountUrl',
+        message:
+          'Expected <account>.snowflakecomputing.com or <account>.<region>.<cloud>.snowflakecomputing.com'
+      });
     }
   }
 

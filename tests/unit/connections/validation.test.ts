@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { validateProfile } from '../../../src/renderer/lib/connections/validation';
+import {
+  normalizeAccountUrl,
+  validateProfile
+} from '../../../src/renderer/lib/connections/validation';
 import type { ConnectionProfile } from '../../../src/main/types';
 
 describe('validateProfile', () => {
@@ -94,5 +97,70 @@ describe('validateProfile', () => {
       username: 'user'
     };
     expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('Org-style account URL with hyphen (TWDGTQS-CP19426) -> valid', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Test',
+      accountUrl: 'TWDGTQS-CP19426.snowflakecomputing.com',
+      authMethod: 'externalbrowser',
+      username: 'user'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('URL pasted with https:// prefix -> normalized + valid', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Test',
+      accountUrl: 'https://TWDGTQS-CP19426.snowflakecomputing.com',
+      authMethod: 'externalbrowser',
+      username: 'user'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('URL pasted with trailing slash -> normalized + valid', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Test',
+      accountUrl: 'TWDGTQS-CP19426.snowflakecomputing.com/',
+      authMethod: 'externalbrowser',
+      username: 'user'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('URL with leading/trailing whitespace -> normalized + valid', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Test',
+      accountUrl: '  TWDGTQS-CP19426.snowflakecomputing.com  ',
+      authMethod: 'externalbrowser',
+      username: 'user'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('URL with no-break space (paste artifact) -> normalized + valid', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Test',
+      accountUrl: '\u00A0TWDGTQS-CP19426.snowflakecomputing.com\u200B',
+      authMethod: 'externalbrowser',
+      username: 'user'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('Legacy region.cloud account URL -> valid', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Test',
+      accountUrl: 'xy12345.us-east-1.aws.snowflakecomputing.com',
+      authMethod: 'externalbrowser',
+      username: 'user'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('normalizeAccountUrl strips protocol + path + whitespace + lowercases', () => {
+    expect(normalizeAccountUrl('  HTTPS://Foo-Bar.SnowflakeComputing.com/console?x=1  '))
+      .toBe('foo-bar.snowflakecomputing.com');
   });
 });

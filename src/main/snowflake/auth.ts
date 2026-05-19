@@ -1,28 +1,35 @@
 import type { ConnectionProfileLite } from './types';
 
+const HOST_SUFFIX = '.snowflakecomputing.com';
+
+function parseHost(accountUrl: string): string {
+  const trimmed = accountUrl.trim();
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    return new URL(withProtocol).hostname;
+  } catch {
+    throw new Error(`accountUrl is not a valid URL: ${accountUrl}`);
+  }
+}
+
 /**
  * Extracts the snowflake-sdk `account` identifier from a user URL.
- * `https://ab12345.us-east-1.snowflakecomputing.com` → `ab12345.us-east-1`.
- * Throws on missing protocol, wrong host suffix, or empty result.
+ * Accepts either a bare host (`ab12345.us-east-1.snowflakecomputing.com`)
+ * or a full URL (`https://ab12345.us-east-1.snowflakecomputing.com/console`).
+ * Throws on wrong host suffix or empty result.
  */
 export function parseAccountIdentifier(accountUrl: string): string {
   if (typeof accountUrl !== 'string' || accountUrl.trim() === '') {
     throw new Error('accountUrl is empty');
   }
 
-  let host: string;
-  try {
-    host = new URL(accountUrl.trim()).hostname;
-  } catch {
-    throw new Error(`accountUrl is not a valid URL: ${accountUrl}`);
+  const host = parseHost(accountUrl);
+
+  if (!host.toLowerCase().endsWith(HOST_SUFFIX)) {
+    throw new Error(`accountUrl host must end with ${HOST_SUFFIX}: ${host}`);
   }
 
-  const suffix = '.snowflakecomputing.com';
-  if (!host.toLowerCase().endsWith(suffix)) {
-    throw new Error(`accountUrl host must end with ${suffix}: ${host}`);
-  }
-
-  const account = host.slice(0, host.length - suffix.length);
+  const account = host.slice(0, host.length - HOST_SUFFIX.length);
   if (account === '') {
     throw new Error(`accountUrl is missing the account identifier: ${accountUrl}`);
   }
@@ -102,6 +109,6 @@ export function buildConnectOptions(
 }
 
 function normalizeAccessUrl(accountUrl: string): string {
-  const parsed = new URL(accountUrl.trim());
-  return `${parsed.protocol}//${parsed.host}`;
+  const host = parseHost(accountUrl);
+  return `https://${host}`;
 }
