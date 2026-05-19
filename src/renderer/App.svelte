@@ -10,15 +10,49 @@
   import HistoryDrawer from '$lib/shell/HistoryDrawer.svelte';
   import PaneTree from '$lib/panes/PaneTree.svelte';
   import ConnectionDialog from '$lib/connections/ConnectionDialog.svelte';
+  import MfaPromptDialog from '$lib/connections/MfaPromptDialog.svelte';
 
   import { tabs, installTabsKeymap } from '$lib/stores/tabs.svelte';
   import { panes as panesSingleton, type PaneTreeStore } from '$lib/stores/panes.svelte';
   import { installKeymap } from '$lib/utils/keymap';
+  import { profiles } from '$lib/stores/profiles.svelte';
+  import { sessions } from '$lib/stores/sessions.svelte';
 
   setContext<() => PaneTreeStore>('panes-store', () => tabs.active?.paneTree ?? panesSingleton);
 
   let connectionsOpen = $state(false);
   let historyOpen = $state(false);
+  let mfaOpen = $state(false);
+
+  let mfaProfileName = $derived(
+    profiles.list.find((p) => p.id === profiles.activeProfileId)?.name ?? ''
+  );
+
+  $effect(() => {
+    if (sessions.status === 'needs-mfa' && !mfaOpen) {
+      mfaOpen = true;
+    }
+  });
+
+  async function handleMfaSubmit(passcode: string): Promise<void> {
+    const profileId = profiles.activeProfileId;
+    if (profileId === null) return;
+    try {
+      await sessions.openWithPasscode(profileId, passcode);
+      mfaOpen = false;
+      toast.success('Connected');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message);
+    }
+  }
+
+  function handleMfaOpenChange(v: boolean): void {
+    mfaOpen = v;
+    if (!v && sessions.status === 'needs-mfa') {
+      profiles.setActive(null);
+    }
+  }
 
   function openConnections(): void {
     setTimeout(() => {
@@ -103,6 +137,15 @@
     open={connectionsOpen}
     onOpenChange={(v) => (connectionsOpen = v)}
     onConnect={(p) => toast.success(`Connected to ${p.name}`)}
+  />
+
+  <MfaPromptDialog
+    open={mfaOpen}
+    profileName={mfaProfileName}
+    onOpenChange={handleMfaOpenChange}
+    onSubmit={(code) => {
+      void handleMfaSubmit(code);
+    }}
   />
 
   <Toaster richColors position="bottom-right" />

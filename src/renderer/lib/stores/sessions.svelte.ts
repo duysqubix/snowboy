@@ -26,7 +26,7 @@ interface SessionEntry {
   openedAt: number;
 }
 
-type SessionStatus = 'idle' | 'opening' | 'ready' | 'error';
+type SessionStatus = 'idle' | 'opening' | 'ready' | 'error' | 'needs-mfa';
 
 class SessionsStore {
   #byProfile = $state<Map<string, SessionEntry>>(new Map());
@@ -50,9 +50,11 @@ class SessionsStore {
 
   /**
    * Called from a Svelte `$effect` that watches `profiles.activeProfileId`.
-   * If a session for the new profile already exists, just mark it active
-   * and return — no IPC. Otherwise issue `sessions.open` and store the
-   * resulting id.
+   * If a session for the new profile already exists, just mark it active.
+   * For `password_mfa` profiles without a cached session, status becomes
+   * `'needs-mfa'` so a prompt can collect a fresh TOTP code — auto-open
+   * with a stale or missing passcode would always fail. All other auth
+   * methods auto-open.
    */
   async syncToActiveProfile(profileId: string | null): Promise<void> {
     this.#activeProfileId = profileId;
@@ -66,6 +68,14 @@ class SessionsStore {
       this.#lastError = null;
       return;
     }
+
+    const profile = profiles.list.find((p) => p.id === profileId);
+    if (profile && profile.authMethod === 'password_mfa') {
+      this.#status = 'needs-mfa';
+      this.#lastError = null;
+      return;
+    }
+
     if (this.#pendingProfileId === profileId) return;
     this.#pendingProfileId = profileId;
     this.#status = 'opening';
@@ -98,6 +108,38 @@ class SessionsStore {
    * for the same profile will re-open. Best-effort close — failures are
    * swallowed since the renderer cannot do anything with them.
    */
+  /**
+   * Open a session for the active profile using a one-shot MFA passcode.
+   * Use this when `status === 'needs-mfa'` after the user supplies a TOTP
+   * code. Throws on failure so the caller can surface a per-attempt
+   * error (wrong/expired code) without polluting `lastError`.
+   */
+  async openWithPasscode(profileId: string, passcode: string): Promise<void> {
+    if (this.#byProfile.has(profileId)) {
+      await this.forget(profileId);
+    }
+    this.#pendingProfileId = profileId;
+    this.#status = 'opening';
+    this.#lastError = null;
+    try {
+      const sessionId = await snowboy.sessions.open(profileId, {}, passcode);
+      this.#byProfile.set(profileId, { sessionId, openedAt: Date.now() });
+      if (this.#activeProfileId === profileId) {
+        this.#status = 'ready';
+      }
+    } catch (err) {
+      this.#lastError = err instanceof Error ? err.message : String(err);
+      if (this.#activeProfileId === profileId) {
+        this.#status = 'needs-mfa';
+      }
+      throw err;
+    } finally {
+      if (this.#pendingProfileId === profileId) {
+        this.#pendingProfileId = null;
+      }
+    }
+  }
+
   async forget(profileId: string): Promise<void> {
     const entry = this.#byProfile.get(profileId);
     if (entry === undefined) return;

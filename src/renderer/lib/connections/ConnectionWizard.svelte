@@ -92,49 +92,79 @@
     }
   }
 
+  async function persistProfileAndPassword(): Promise<ConnectionProfile> {
+    let savedProfile: ConnectionProfile;
+    if (profile) {
+      await profiles.update(profile.id, currentInput);
+      const found = profiles.list.find((p) => p.id === profile!.id);
+      if (!found) {
+        throw new Error('Saved profile vanished after refresh');
+      }
+      savedProfile = found;
+    } else {
+      savedProfile = await profiles.add(currentInput);
+    }
+    await persistPasswordIfPresent(savedProfile.id);
+    return savedProfile;
+  }
+
   async function handleSave() {
     if (!isValid) return;
 
     try {
-      let savedId: string;
-      if (profile) {
-        await profiles.update(profile.id, currentInput);
-        savedId = profile.id;
-      } else {
-        const created = await profiles.add(currentInput);
-        savedId = created.id;
-      }
-      await persistPasswordIfPresent(savedId);
+      await persistProfileAndPassword();
       onSave();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save profile');
     }
   }
 
-  async function handleSaveAndConnect() {
+  async function handleSaveAndTest() {
     if (!isValid) return;
+    if (needsPasscode && passcode.trim().length === 0) {
+      toast.error('Enter the 6-digit MFA code from your authenticator app');
+      return;
+    }
 
     let savedProfile: ConnectionProfile;
     try {
-      if (profile) {
-        await profiles.update(profile.id, currentInput);
-        const found = profiles.list.find(p => p.id === profile!.id);
-        if (!found) {
-          toast.error('Saved profile vanished after refresh');
-          return;
-        }
-        savedProfile = found;
-      } else {
-        savedProfile = await profiles.add(currentInput);
-      }
-      await persistPasswordIfPresent(savedProfile.id);
+      savedProfile = await persistProfileAndPassword();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save profile');
       return;
     }
 
+    isTesting = true;
+    try {
+      const result = await profiles.test(
+        savedProfile.id,
+        needsPasscode ? passcode.trim() : undefined
+      );
+      if (result.ok) {
+        toast.success(`Connection OK${result.durationMs ? ` (${result.durationMs}ms)` : ''}`);
+      } else {
+        toast.error(result.message || 'Connection failed');
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Connection failed');
+    } finally {
+      passcode = '';
+      isTesting = false;
+    }
+  }
+
+  async function handleSaveAndConnect() {
+    if (!isValid) return;
     if (needsPasscode && passcode.trim().length === 0) {
       toast.error('Enter the 6-digit MFA code from your authenticator app');
+      return;
+    }
+
+    let savedProfile: ConnectionProfile;
+    try {
+      savedProfile = await persistProfileAndPassword();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save profile');
       return;
     }
 
@@ -255,8 +285,8 @@
           placeholder="6-digit code from your authenticator app"
         />
         <p class="text-xs text-muted-foreground">
-          Required only for <strong>Save & Connect</strong>. The code is single-use; you'll be
-          asked again on every new sign-in.
+          Required for <strong>Save & Test</strong> and <strong>Save & Connect</strong>. Single-use
+          — you'll be asked again on every new sign-in.
         </p>
       </div>
     {/if}
@@ -284,6 +314,9 @@
   <div class="flex items-center justify-end gap-2 pt-4 border-t mt-auto">
     <Button variant="outline" onclick={onCancel} disabled={isTesting}>Cancel</Button>
     <Button variant="secondary" onclick={handleSave} disabled={!isValid || isTesting}>Save</Button>
+    <Button variant="outline" onclick={handleSaveAndTest} disabled={!isValid || isTesting}>
+      {isTesting ? 'Testing...' : 'Save & Test'}
+    </Button>
     <Button onclick={handleSaveAndConnect} disabled={!isValid || isTesting}>
       {isTesting ? 'Connecting...' : 'Save & Connect'}
     </Button>
