@@ -184,16 +184,6 @@ export async function openSession(
     password = stored;
   }
 
-  if (
-    row.auth_method === 'password_mfa' &&
-    (passcode === undefined || passcode.trim().length === 0)
-  ) {
-    throw new Error(
-      'sessions.open: this profile requires an MFA passcode. ' +
-        'Provide the 6-digit code from your authenticator app.'
-    );
-  }
-
   const lite = rowToLite(row);
   const options: OpenSessionOptions = {};
   if (password !== undefined) options.password = password;

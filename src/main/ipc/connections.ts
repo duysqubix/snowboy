@@ -387,15 +387,6 @@ export async function testConnection(
     password = stored;
   }
 
-  if (row.auth_method === 'password_mfa' && (passcode === undefined || passcode.trim().length === 0)) {
-    return {
-      ok: false,
-      message:
-        'This profile requires an MFA passcode. Enter the 6-digit code from your authenticator app, then try again.',
-      durationMs: Date.now() - startedAt
-    };
-  }
-
   const lite = rowToLite(row);
   const options: OpenSessionOptions = {};
   if (password !== undefined) options.password = password;

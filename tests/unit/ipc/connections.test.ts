@@ -460,14 +460,19 @@ describe('setPasswordForProfile / hasPasswordForProfile / clearPasswordForProfil
     expect(r.message).toContain('Edit the profile and enter your Snowflake password');
   });
 
-  test('testConnection password_mfa without passcode -> friendly hint', async () => {
+  test('testConnection password_mfa without passcode + no cached token -> SDK error surfaces', async () => {
     saveProfile(profileFixture({ authMethod: 'password_mfa' }));
     await setPasswordForProfile('p1', 'hunter2');
 
+    __setSessionFactoryForTesting(async () => {
+      throw new Error(
+        'Failed to authenticate: MFA with TOTP is required. To authenticate, provide both your password and a current TOTP passcode.'
+      );
+    });
+
     const r = await testConnection('p1');
     expect(r.ok).toBe(false);
-    expect(r.message).toContain('MFA passcode');
-    expect(r.message).toContain('authenticator app');
+    expect(r.message).toContain('TOTP');
   });
 
   test('testConnection password_mfa passes passcode through to the session factory', async () => {
