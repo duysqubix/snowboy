@@ -1,9 +1,11 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button';
   import { Separator } from '$lib/components/ui/separator';
+  import { toast } from 'svelte-sonner';
   import { profiles } from '../stores/profiles.svelte';
   import type { ConnectionProfile } from '../../../main/types';
   import { Trash2 } from 'lucide-svelte';
+  import MfaPromptDialog from './MfaPromptDialog.svelte';
 
   let {
     onAdd = () => {},
@@ -15,6 +17,9 @@
     onConnect?: (profile: ConnectionProfile) => void;
   }>();
 
+  let mfaOpen = $state(false);
+  let mfaProfile = $state<ConnectionProfile | null>(null);
+
   function formatAuthMethod(method: string) {
     switch (method) {
       case 'externalbrowser': return 'SSO';
@@ -23,7 +28,41 @@
       default: return method;
     }
   }
+
+  async function handleConnectClick(profile: ConnectionProfile): Promise<void> {
+    if (profile.authMethod === 'password_mfa') {
+      mfaProfile = profile;
+      mfaOpen = true;
+      return;
+    }
+    onConnect(profile);
+  }
+
+  async function handleMfaSubmit(passcode: string): Promise<void> {
+    if (!mfaProfile) return;
+    const profile = mfaProfile;
+    const result = await profiles.test(profile.id, passcode);
+    if (result.ok) {
+      mfaOpen = false;
+      mfaProfile = null;
+      onConnect(profile);
+    } else {
+      toast.error(result.message || 'Connection failed');
+    }
+  }
 </script>
+
+<MfaPromptDialog
+  open={mfaOpen}
+  profileName={mfaProfile?.name ?? ''}
+  onOpenChange={(v) => {
+    mfaOpen = v;
+    if (!v) mfaProfile = null;
+  }}
+  onSubmit={(code) => {
+    void handleMfaSubmit(code);
+  }}
+/>
 
 <div class="flex flex-col h-full">
   <div class="flex items-center justify-between pb-4">
@@ -63,7 +102,7 @@
               <Button variant="ghost" size="icon" class="text-destructive hover:text-destructive hover:bg-destructive/10" onclick={() => profiles.remove(profile.id)}>
                 <Trash2 class="h-4 w-4" />
               </Button>
-              <Button size="sm" onclick={() => onConnect(profile)}>Connect</Button>
+              <Button size="sm" onclick={() => void handleConnectClick(profile)}>Connect</Button>
             </div>
           </div>
         {/each}

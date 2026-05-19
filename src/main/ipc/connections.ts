@@ -332,7 +332,10 @@ export async function hasPasswordForProfile(profileId: string): Promise<boolean>
   return stored !== null;
 }
 
-export async function testConnection(profileId: string): Promise<TestResult> {
+export async function testConnection(
+  profileId: string,
+  passcode?: string
+): Promise<TestResult> {
   const startedAt = Date.now();
 
   if (typeof profileId !== 'string' || profileId.length === 0) {
@@ -384,8 +387,19 @@ export async function testConnection(profileId: string): Promise<TestResult> {
     password = stored;
   }
 
+  if (row.auth_method === 'password_mfa' && (passcode === undefined || passcode.trim().length === 0)) {
+    return {
+      ok: false,
+      message:
+        'This profile requires an MFA passcode. Enter the 6-digit code from your authenticator app, then try again.',
+      durationMs: Date.now() - startedAt
+    };
+  }
+
   const lite = rowToLite(row);
-  const options: OpenSessionOptions = password !== undefined ? { password } : {};
+  const options: OpenSessionOptions = {};
+  if (password !== undefined) options.password = password;
+  if (passcode !== undefined && passcode.trim().length > 0) options.passcode = passcode.trim();
   // Empty session context — the profile's defaults are baked into the
   // connect options by `buildConnectOptions`. Running USE statements on top
   // would just duplicate work and turn a missing-default into a noisier
@@ -432,8 +446,9 @@ export function register(ipcMain: IpcMain): void {
   ipcMain.handle(CHANNELS.connections.deleteProfile, (_event, id: string) =>
     deleteProfile(id)
   );
-  ipcMain.handle(CHANNELS.connections.test, (_event, profileId: string) =>
-    testConnection(profileId)
+  ipcMain.handle(
+    CHANNELS.connections.test,
+    (_event, profileId: string, passcode?: string) => testConnection(profileId, passcode)
   );
   ipcMain.handle(
     CHANNELS.connections.setPassword,

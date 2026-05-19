@@ -72,9 +72,9 @@ class ProfilesStore {
     this.#activeProfileId = id;
   }
 
-  async test(id: string): Promise<TestResult> {
+  async test(id: string, passcode?: string): Promise<TestResult> {
     try {
-      return await snowboy.connections.test(id);
+      return await snowboy.connections.test(id, passcode);
     } catch (err: unknown) {
       return {
         ok: false,

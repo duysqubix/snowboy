@@ -27,6 +27,7 @@
   let authMethod = $state<AuthMethod>(untrack(() => profile?.authMethod || 'externalbrowser'));
   let username = $state(untrack(() => profile?.username || ''));
   let password = $state('');
+  let passcode = $state('');
   let hasExistingPassword = $state(false);
   let defaultRole = $state(untrack(() => profile?.defaultRole || ''));
   let defaultWarehouse = $state(untrack(() => profile?.defaultWarehouse || ''));
@@ -38,6 +39,7 @@
   let needsPassword = $derived(
     authMethod === 'password' || authMethod === 'password_mfa'
   );
+  let needsPasscode = $derived(authMethod === 'password_mfa');
 
   onMount(async () => {
     if (profile && (profile.authMethod === 'password' || profile.authMethod === 'password_mfa')) {
@@ -131,9 +133,17 @@
       return;
     }
 
+    if (needsPasscode && passcode.trim().length === 0) {
+      toast.error('Enter the 6-digit MFA code from your authenticator app');
+      return;
+    }
+
     isTesting = true;
     try {
-      const result = await profiles.test(savedProfile.id);
+      const result = await profiles.test(
+        savedProfile.id,
+        needsPasscode ? passcode.trim() : undefined
+      );
       if (result.ok) {
         onConnect(savedProfile);
       } else {
@@ -142,6 +152,7 @@
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Connection failed');
     } finally {
+      passcode = '';
       isTesting = false;
     }
   }
@@ -228,6 +239,25 @@
         {#if getError('password')}
           <p class="text-xs text-destructive">{getError('password')}</p>
         {/if}
+      </div>
+    {/if}
+
+    {#if needsPasscode}
+      <div class="space-y-2">
+        <Label for="passcode">MFA passcode</Label>
+        <Input
+          id="passcode"
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength={10}
+          bind:value={passcode}
+          placeholder="6-digit code from your authenticator app"
+        />
+        <p class="text-xs text-muted-foreground">
+          Required only for <strong>Save & Connect</strong>. The code is single-use; you'll be
+          asked again on every new sign-in.
+        </p>
       </div>
     {/if}
 

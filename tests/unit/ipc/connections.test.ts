@@ -459,4 +459,47 @@ describe('setPasswordForProfile / hasPasswordForProfile / clearPasswordForProfil
     expect(r.message).not.toContain('T3.2');
     expect(r.message).toContain('Edit the profile and enter your Snowflake password');
   });
+
+  test('testConnection password_mfa without passcode -> friendly hint', async () => {
+    saveProfile(profileFixture({ authMethod: 'password_mfa' }));
+    await setPasswordForProfile('p1', 'hunter2');
+
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('MFA passcode');
+    expect(r.message).toContain('authenticator app');
+  });
+
+  test('testConnection password_mfa passes passcode through to the session factory', async () => {
+    saveProfile(profileFixture({ authMethod: 'password_mfa' }));
+    await setPasswordForProfile('p1', 'hunter2');
+
+    let receivedPassword: string | undefined;
+    let receivedPasscode: string | undefined;
+    __setSessionFactoryForTesting(async (_lite, _ctx, options) => {
+      receivedPassword = options.password;
+      receivedPasscode = options.passcode;
+      return makeFakeSession();
+    });
+
+    const r = await testConnection('p1', '123456');
+    expect(r.ok).toBe(true);
+    expect(receivedPassword).toBe('hunter2');
+    expect(receivedPasscode).toBe('123456');
+  });
+
+  test('testConnection trims whitespace from passcode', async () => {
+    saveProfile(profileFixture({ authMethod: 'password_mfa' }));
+    await setPasswordForProfile('p1', 'hunter2');
+
+    let receivedPasscode: string | undefined;
+    __setSessionFactoryForTesting(async (_lite, _ctx, options) => {
+      receivedPasscode = options.passcode;
+      return makeFakeSession();
+    });
+
+    const r = await testConnection('p1', '  123456  ');
+    expect(r.ok).toBe(true);
+    expect(receivedPasscode).toBe('123456');
+  });
 });

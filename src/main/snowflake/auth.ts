@@ -39,11 +39,14 @@ export function parseAccountIdentifier(accountUrl: string): string {
 /**
  * Builds `createConnection(...)` options for the three v0.1 auth methods.
  * `password` is unused for `externalbrowser` and required for the two
- * password-based methods.
+ * password-based methods. `passcode` is the time-based MFA token (TOTP);
+ * snowflake-sdk only honors it for `USERNAME_PASSWORD_MFA` and the caller
+ * must obtain it fresh per connect attempt (TOTP codes are single-use).
  */
 export function buildConnectOptions(
   profile: ConnectionProfileLite,
   password?: string,
+  passcode?: string,
 ): Record<string, unknown> {
   const account = parseAccountIdentifier(profile.accountUrl);
 
@@ -73,19 +76,24 @@ export function buildConnectOptions(
     case 'externalbrowser':
       return { ...base, authenticator: 'EXTERNALBROWSER' };
 
-    case 'password_mfa':
+    case 'password_mfa': {
       if (profile.username === undefined || profile.username === '') {
         throw new Error('password_mfa auth requires a username');
       }
       if (password === undefined || password === '') {
         throw new Error('password_mfa auth requires a password');
       }
-      return {
+      const mfaOpts: Record<string, unknown> = {
         ...base,
         authenticator: 'USERNAME_PASSWORD_MFA',
         username: profile.username,
         password,
       };
+      if (passcode !== undefined && passcode !== '') {
+        mfaOpts['passcode'] = passcode;
+      }
+      return mfaOpts;
+    }
 
     case 'password':
       if (profile.username === undefined || profile.username === '') {

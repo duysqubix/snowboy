@@ -40,6 +40,7 @@ export interface SnowflakeSdkLike {
 
 export interface OpenSessionOptions {
   password?: string;
+  passcode?: string;
   sdk?: SnowflakeSdkLike;
 }
 
@@ -97,7 +98,7 @@ export class Session {
     options: OpenSessionOptions = {},
   ): Promise<Session> {
     const sdk = options.sdk ?? (await defaultSnowflakeSdk());
-    const connectOptions = buildConnectOptions(profile, options.password);
+    const connectOptions = buildConnectOptions(profile, options.password, options.passcode);
     const connection = sdk.createConnection(connectOptions);
 
     await new Promise<void>((resolve, reject) => {

@@ -160,7 +160,8 @@ function toDriverContextPatch(partial: Partial<SessionContext>): Partial<DriverS
 
 export async function openSession(
   profileId: string,
-  context: SessionContext
+  context: SessionContext,
+  passcode?: string
 ): Promise<SessionId> {
   if (typeof profileId !== 'string' || profileId.length === 0) {
     throw new Error('sessions.open: profileId is required');
@@ -176,15 +177,29 @@ export async function openSession(
     const stored = await getSecret(passwordKey(profileId));
     if (stored === null) {
       throw new Error(
-        `sessions.open: no password stored for profile ${profileId} ` +
-          '(password capture is wizard work; use externalbrowser until that lands)'
+        `sessions.open: no password stored for profile ${profileId}. ` +
+          'Edit the profile in the connection wizard and enter your Snowflake password first.'
       );
     }
     password = stored;
   }
 
+  if (
+    row.auth_method === 'password_mfa' &&
+    (passcode === undefined || passcode.trim().length === 0)
+  ) {
+    throw new Error(
+      'sessions.open: this profile requires an MFA passcode. ' +
+        'Provide the 6-digit code from your authenticator app.'
+    );
+  }
+
   const lite = rowToLite(row);
-  const options: OpenSessionOptions = password !== undefined ? { password } : {};
+  const options: OpenSessionOptions = {};
+  if (password !== undefined) options.password = password;
+  if (passcode !== undefined && passcode.trim().length > 0) {
+    options.passcode = passcode.trim();
+  }
   const driverContext = toDriverContext(context ?? {});
 
   const session = await getSessionFactory()(lite, driverContext, options);
@@ -254,7 +269,8 @@ let shutdownInstalled = false;
 export function register(ipcMain: IpcMain): void {
   ipcMain.handle(
     CHANNELS.sessions.open,
-    (_event, profileId: string, context: SessionContext) => openSession(profileId, context)
+    (_event, profileId: string, context: SessionContext, passcode?: string) =>
+      openSession(profileId, context, passcode)
   );
   ipcMain.handle(CHANNELS.sessions.close, (_event, sessionId: SessionId) =>
     closeSession(sessionId)
