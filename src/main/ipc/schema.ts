@@ -38,14 +38,12 @@
 
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
-import { getCached, setCached } from '../storage/schemaCache';
 import type { Session } from '../snowflake/session';
 import type { ColumnMeta } from '../snowflake/types';
 import type { Column, ObjectRef, SchemaObject, SessionId } from '../types';
 import { requireSession } from './sessions';
 
 const SCHEMA_QUERY_TIMEOUT_MS = 30_000;
-const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // SQL helpers
@@ -133,59 +131,7 @@ function stringOrEmpty(value: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Cache envelope (TTL wrapping)
-// ---------------------------------------------------------------------------
-
-interface CachedEnvelope<T> {
-  fetchedAt: number;
-  data: T;
-}
-
-function isEnvelope<T>(value: unknown): value is CachedEnvelope<T> {
-  if (typeof value !== 'object' || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate['fetchedAt'] === 'number' && 'data' in candidate;
-}
-
-function readFresh<T>(
-  profileId: string,
-  database: string,
-  schema: string | null,
-  objectType: string
-): T | null {
-  const stored = getCached(profileId, database, schema, objectType);
-  if (stored === null || !isEnvelope<T>(stored)) return null;
-  if (Date.now() - stored.fetchedAt > CACHE_TTL_MS) return null;
-  return stored.data;
-}
-
-function writeFresh<T>(
-  profileId: string,
-  database: string,
-  schema: string | null,
-  objectType: string,
-  data: T
-): void {
-  const envelope: CachedEnvelope<T> = { fetchedAt: Date.now(), data };
-  setCached(profileId, database, schema, objectType, envelope);
-}
-
-async function getOrFetch<T>(
-  profileId: string,
-  database: string,
-  schema: string | null,
-  objectType: string,
-  fetcher: () => Promise<T>
-): Promise<T> {
-  const cached = readFresh<T>(profileId, database, schema, objectType);
-  if (cached !== null) return cached;
-  const fresh = await fetcher();
-  writeFresh(profileId, database, schema, objectType, fresh);
-  return fresh;
-}
-
-// ---------------------------------------------------------------------------
-// Fetchers (raw Snowflake-side enumeration; cache wrapping happens above)
+// Fetchers (raw Snowflake-side enumeration; caching is deferred to Wave 4)
 // ---------------------------------------------------------------------------
 
 async function fetchDatabaseNames(session: Session): Promise<string[]> {
@@ -314,8 +260,9 @@ async function fetchDDL(session: Session, obj: ObjectRef): Promise<string> {
 
 export async function listDatabases(sessionId: SessionId): Promise<string[]> {
   const session = requireSession(sessionId);
-  const profileId = session.getProfileId();
-  return getOrFetch(profileId, '', null, 'database', () => fetchDatabaseNames(session));
+  const names = await fetchDatabaseNames(session);
+  console.log(`[schema] listDatabases: returning ${names.length} databases`);
+  return names;
 }
 
 export async function listSchemas(
@@ -326,10 +273,7 @@ export async function listSchemas(
     throw new Error('schema.listSchemas: database is required');
   }
   const session = requireSession(sessionId);
-  const profileId = session.getProfileId();
-  return getOrFetch(profileId, database, null, 'schema', () =>
-    fetchSchemaNames(session, database)
-  );
+  return fetchSchemaNames(session, database);
 }
 
 export async function listObjects(
@@ -344,16 +288,9 @@ export async function listObjects(
     throw new Error('schema.listObjects: schema is required');
   }
   const session = requireSession(sessionId);
-  const profileId = session.getProfileId();
-  // Tables and views are cached under separate object_type keys so a future
-  // narrow invalidation (only views changed) does not have to evict tables.
   const [tables, views] = await Promise.all([
-    getOrFetch<SchemaObject[]>(profileId, database, schema, 'table', () =>
-      fetchObjectsOfKind(session, database, schema, 'TABLES', 'table')
-    ),
-    getOrFetch<SchemaObject[]>(profileId, database, schema, 'view', () =>
-      fetchObjectsOfKind(session, database, schema, 'VIEWS', 'view')
-    )
+    fetchObjectsOfKind(session, database, schema, 'TABLES', 'table'),
+    fetchObjectsOfKind(session, database, schema, 'VIEWS', 'view')
   ]);
   return [...tables, ...views];
 }

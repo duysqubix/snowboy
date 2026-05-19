@@ -24,7 +24,7 @@ import {
 } from '../../../src/main/secrets/safeStorage';
 import { closeDatabase, openDatabase } from '../../../src/main/storage/db';
 import { insertProfile } from '../../../src/main/storage/profiles';
-import { getCached } from '../../../src/main/storage/schemaCache';
+
 import type { Session } from '../../../src/main/snowflake/session';
 import type {
   ColumnMeta,
@@ -193,9 +193,13 @@ describe('listDatabases', () => {
     expect(executed).toEqual(['SHOW DATABASES']);
   });
 
-  test('caches the second call (no additional SQL is run)', async () => {
+  test('re-runs SHOW DATABASES on each call (caching deferred to Wave 4)', async () => {
     seedProfile();
     const id = await openWithStubs([
+      {
+        match: /^SHOW DATABASES$/,
+        result: { columns: [nameColumn], rows: [['DB1']] }
+      },
       {
         match: /^SHOW DATABASES$/,
         result: { columns: [nameColumn], rows: [['DB1']] }
@@ -205,9 +209,7 @@ describe('listDatabases', () => {
     await listDatabases(id);
     await listDatabases(id);
 
-    expect(executed).toEqual(['SHOW DATABASES']);
-    const cached = getCached('p1', '', null, 'database');
-    expect(cached).not.toBeNull();
+    expect(executed).toEqual(['SHOW DATABASES', 'SHOW DATABASES']);
   });
 });
 

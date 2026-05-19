@@ -3,6 +3,7 @@
   import { toast } from 'svelte-sonner';
   import { getOrCreatePaneState } from './paneStore.svelte';
   import { panes as panesSingleton, type PaneTreeStore } from '../stores/panes.svelte';
+  import { profiles } from '../stores/profiles.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { queries } from '../stores/queries.svelte';
   import { snowboy } from '../ipc/client';
@@ -16,6 +17,23 @@
   let { paneId }: { paneId: string } = $props();
 
   const paneState = untrack(() => getOrCreatePaneState(paneId));
+
+  $effect(() => {
+    const profile = profiles.list.find((p) => p.id === profiles.activeProfileId);
+    if (profile === undefined) return;
+    if (paneState.role === undefined && profile.defaultRole) {
+      paneState.role = profile.defaultRole;
+    }
+    if (paneState.warehouse === undefined && profile.defaultWarehouse) {
+      paneState.warehouse = profile.defaultWarehouse;
+    }
+    if (paneState.database === undefined && profile.defaultDatabase) {
+      paneState.database = profile.defaultDatabase;
+    }
+    if (paneState.schema === undefined && profile.defaultSchema) {
+      paneState.schema = profile.defaultSchema;
+    }
+  });
 
   const getPaneStore = getContext<(() => PaneTreeStore) | undefined>('panes-store');
   const panes = $derived(getPaneStore ? getPaneStore() : panesSingleton);
