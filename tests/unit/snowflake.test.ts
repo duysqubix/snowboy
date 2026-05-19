@@ -171,6 +171,28 @@ describe('buildConnectOptions', () => {
     expect(ok['username']).toBe('tester');
   });
 
+  test('pat sets PROGRAMMATIC_ACCESS_TOKEN, forwards token, and requires creds', () => {
+    expect(() => buildConnectOptions(profileFixture({ authMethod: 'pat' }))).toThrow(
+      /Personal Access Token/,
+    );
+    expect(() =>
+      buildConnectOptions(profileFixture({ authMethod: 'pat', username: '' }), 'patValue'),
+    ).toThrow(/username/);
+    const ok = buildConnectOptions(profileFixture({ authMethod: 'pat' }), 'patValue');
+    expect(ok['authenticator']).toBe('PROGRAMMATIC_ACCESS_TOKEN');
+    expect(ok['token']).toBe('patValue');
+    expect(ok['username']).toBe('tester');
+    expect(ok['password']).toBeUndefined();
+  });
+
+  test('pat strips the profile default role (PATs are role-bound at creation)', () => {
+    const ok = buildConnectOptions(
+      profileFixture({ authMethod: 'pat', defaultRole: 'SYSADMIN' }),
+      'patValue',
+    );
+    expect(ok['role']).toBeUndefined();
+  });
+
   test('forwards default role/warehouse/db/schema', () => {
     const opts = buildConnectOptions(
       profileFixture({

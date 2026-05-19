@@ -37,11 +37,9 @@ export function parseAccountIdentifier(accountUrl: string): string {
 }
 
 /**
- * Builds `createConnection(...)` options for the three v0.1 auth methods.
- * `password` is unused for `externalbrowser` and required for the two
- * password-based methods. `passcode` is the time-based MFA token (TOTP);
- * snowflake-sdk only honors it for `USERNAME_PASSWORD_MFA` and the caller
- * must obtain it fresh per connect attempt (TOTP codes are single-use).
+ * `password` carries the secret for `password`/`password_mfa`/`pat`
+ * (for `pat` it is the Programmatic Access Token, forwarded as `token`).
+ * `passcode` is the single-use TOTP, honored only for `password_mfa`.
  */
 export function buildConnectOptions(
   profile: ConnectionProfileLite,
@@ -113,6 +111,25 @@ export function buildConnectOptions(
         username: profile.username,
         password,
       };
+
+    case 'pat': {
+      if (profile.username === undefined || profile.username === '') {
+        throw new Error('pat auth requires a username');
+      }
+      if (password === undefined || password === '') {
+        throw new Error('pat auth requires a Personal Access Token');
+      }
+      // PATs are bound to a role at creation; passing a conflicting
+      // `role` hint produces a "role not granted" error. Strip it.
+      const patOpts: Record<string, unknown> = {
+        ...base,
+        authenticator: 'PROGRAMMATIC_ACCESS_TOKEN',
+        username: profile.username,
+        token: password,
+      };
+      delete patOpts['role'];
+      return patOpts;
+    }
 
     default: {
       const exhaustive: never = profile.authMethod;

@@ -109,7 +109,7 @@ function passwordKey(profileId: string): string {
 interface ProfileRowLike {
   id: string;
   account_url: string;
-  auth_method: 'externalbrowser' | 'password_mfa' | 'password';
+  auth_method: 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
   username: string;
   default_role: string | null;
   default_warehouse: string | null;
@@ -173,12 +173,17 @@ export async function openSession(
   }
 
   let password: string | undefined;
-  if (row.auth_method === 'password' || row.auth_method === 'password_mfa') {
+  if (
+    row.auth_method === 'password' ||
+    row.auth_method === 'password_mfa' ||
+    row.auth_method === 'pat'
+  ) {
     const stored = await getSecret(passwordKey(profileId));
     if (stored === null) {
+      const secretName = row.auth_method === 'pat' ? 'Personal Access Token' : 'password';
       throw new Error(
-        `sessions.open: no password stored for profile ${profileId}. ` +
-          'Edit the profile in the connection wizard and enter your Snowflake password first.'
+        `sessions.open: no ${secretName} stored for profile ${profileId}. ` +
+          `Edit the profile in the connection wizard and enter your Snowflake ${secretName} first.`
       );
     }
     password = stored;

@@ -365,22 +365,26 @@ export async function testConnection(
   }
 
   let password: string | undefined;
-  if (row.auth_method === 'password' || row.auth_method === 'password_mfa') {
+  if (
+    row.auth_method === 'password' ||
+    row.auth_method === 'password_mfa' ||
+    row.auth_method === 'pat'
+  ) {
+    const secretName = row.auth_method === 'pat' ? 'Personal Access Token' : 'password';
     let stored: string | null;
     try {
       stored = await getSecret(passwordKey(profileId));
     } catch (err) {
       return {
         ok: false,
-        message: `Failed to read password from secrets store: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Failed to read ${secretName} from secrets store: ${err instanceof Error ? err.message : String(err)}`,
         durationMs: Date.now() - startedAt
       };
     }
     if (stored === null) {
       return {
         ok: false,
-        message:
-          'No password stored for this profile. Edit the profile and enter your Snowflake password, then try again.',
+        message: `No ${secretName} stored for this profile. Edit the profile and enter your Snowflake ${secretName}, then try again.`,
         durationMs: Date.now() - startedAt
       };
     }

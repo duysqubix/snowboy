@@ -38,12 +38,19 @@
   let isTesting = $state(false);
 
   let needsPassword = $derived(
-    authMethod === 'password' || authMethod === 'password_mfa'
+    authMethod === 'password' || authMethod === 'password_mfa' || authMethod === 'pat'
   );
   let needsPasscode = $derived(authMethod === 'password_mfa');
+  let isPat = $derived(authMethod === 'pat');
+  let secretLabel = $derived(isPat ? 'Personal Access Token' : 'Password');
 
   onMount(async () => {
-    if (profile && (profile.authMethod === 'password' || profile.authMethod === 'password_mfa')) {
+    if (
+      profile &&
+      (profile.authMethod === 'password' ||
+        profile.authMethod === 'password_mfa' ||
+        profile.authMethod === 'pat')
+    ) {
       try {
         hasExistingPassword = await profiles.hasPassword(profile.id);
       } catch {
@@ -66,9 +73,9 @@
   let baseErrors = $derived(validateProfile(currentInput));
   let passwordError = $derived(
     needsPassword && !profile && password.trim().length === 0
-      ? 'Password is required for password authentication'
+      ? `${secretLabel} is required`
       : needsPassword && profile && !hasExistingPassword && password.trim().length === 0
-        ? 'No password stored — enter one to enable this profile'
+        ? `No ${secretLabel} stored — enter one to enable this profile`
         : undefined
   );
   let errors = $derived(
@@ -193,7 +200,8 @@
   const authOptions = [
     { value: 'externalbrowser', label: 'SSO (External Browser)' },
     { value: 'password_mfa', label: 'Password + MFA' },
-    { value: 'password', label: 'Password' }
+    { value: 'password', label: 'Password' },
+    { value: 'pat', label: 'Personal Access Token (PAT)' }
   ];
 
   let selectedAuthOption = $derived(authOptions.find(o => o.value === authMethod) || authOptions[0]);
@@ -254,19 +262,40 @@
 
     {#if needsPassword}
       <div class="space-y-2">
-        <Label for="password">Password *</Label>
+        <div class="flex items-center justify-between gap-2">
+          <Label for="password">{secretLabel} *</Label>
+          {#if isPat}
+            <a
+              href="https://docs.snowflake.com/en/user-guide/programmatic-access-tokens"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-xs text-primary hover:underline"
+              title="How to create a PAT in Snowflake"
+            >
+              How to create a PAT ↗
+            </a>
+          {/if}
+        </div>
         <Input
           id="password"
           type="password"
           bind:value={password}
           placeholder={hasExistingPassword
-            ? 'Leave blank to keep the stored password'
-            : 'Snowflake account password'}
-          autocomplete="current-password"
+            ? `Leave blank to keep the stored ${secretLabel}`
+            : isPat
+              ? 'Paste your Snowflake PAT'
+              : 'Snowflake account password'}
+          autocomplete={isPat ? 'off' : 'current-password'}
         />
         {#if profile && hasExistingPassword}
           <p class="text-xs text-muted-foreground">
-            A password is already stored for this profile. Type a new one to replace it.
+            A {secretLabel} is already stored for this profile. Type a new one to replace it.
+          </p>
+        {/if}
+        {#if isPat}
+          <p class="text-xs text-muted-foreground">
+            PATs bypass MFA and persist across launches. The PAT's bound role is used
+            automatically — the Default Role field below is ignored for PAT profiles.
           </p>
         {/if}
         {#if getError('password')}
@@ -295,10 +324,12 @@
     {/if}
 
     <div class="grid grid-cols-2 gap-4">
-      <div class="space-y-2">
-        <Label for="defaultRole">Default Role</Label>
-        <Input id="defaultRole" bind:value={defaultRole} placeholder="Optional" />
-      </div>
+      {#if !isPat}
+        <div class="space-y-2">
+          <Label for="defaultRole">Default Role</Label>
+          <Input id="defaultRole" bind:value={defaultRole} placeholder="Optional" />
+        </div>
+      {/if}
       <div class="space-y-2">
         <Label for="defaultWarehouse">Default Warehouse</Label>
         <Input id="defaultWarehouse" bind:value={defaultWarehouse} placeholder="Optional" />

@@ -507,4 +507,26 @@ describe('setPasswordForProfile / hasPasswordForProfile / clearPasswordForProfil
     expect(r.ok).toBe(true);
     expect(receivedPasscode).toBe('123456');
   });
+
+  test('testConnection pat without stored token returns a PAT-specific error', async () => {
+    saveProfile(profileFixture({ authMethod: 'pat' }));
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('Personal Access Token');
+  });
+
+  test('testConnection pat with stored token forwards it to the session factory', async () => {
+    saveProfile(profileFixture({ authMethod: 'pat' }));
+    await setPasswordForProfile('p1', 'pat-secret-xyz');
+
+    let receivedPassword: string | undefined;
+    __setSessionFactoryForTesting(async (_lite, _ctx, options) => {
+      receivedPassword = options.password;
+      return makeFakeSession();
+    });
+
+    const r = await testConnection('p1');
+    expect(r.ok).toBe(true);
+    expect(receivedPassword).toBe('pat-secret-xyz');
+  });
 });

@@ -8,7 +8,7 @@
 export type SessionId = string & { readonly __brand: 'SessionId' };
 export type QueryId = string & { readonly __brand: 'QueryId' };
 
-export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password';
+export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
 
 export interface ConnectionProfile {
   id: string;

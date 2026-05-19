@@ -8,7 +8,7 @@
 import type BetterSqlite3 from 'better-sqlite3';
 import { getDatabase, type Database } from './db';
 
-export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password';
+export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
 
 export interface ConnectionProfileRow {
   id: string;

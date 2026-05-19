@@ -18,7 +18,7 @@ export function asSessionId(value: string): SessionId {
   return value as SessionId;
 }
 
-export type SnowflakeAuthMethod = 'externalbrowser' | 'password_mfa' | 'password';
+export type SnowflakeAuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
 
 export interface ConnectionProfileLite {
   readonly id: string;

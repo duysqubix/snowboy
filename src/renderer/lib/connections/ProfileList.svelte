@@ -26,6 +26,7 @@
       case 'externalbrowser': return 'SSO';
       case 'password_mfa': return 'PW+MFA';
       case 'password': return 'PW';
+      case 'pat': return 'PAT';
       default: return method;
     }
   }
