@@ -1,16 +1,9 @@
 <script lang="ts">
-  import { createTable, FlexRender } from '@tanstack/svelte-table';
-  import {
-    createCoreRowModel,
-    stockFeatures,
-    type ColumnDef,
-    type ColumnResizeMode
-  } from '@tanstack/table-core';
   import { LoaderCircle, Download } from 'lucide-svelte';
-  import { classifyType, formatCell } from './columnTypes';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { classifyType, formatCell, type SnowflakeColumnKind } from './columnTypes';
   import { exportCsv } from './exportCsv';
   import CellDetailPanel from './CellDetailPanel.svelte';
-  import { SvelteSet } from 'svelte/reactivity';
 
   type Column = {
     name: string;
@@ -34,82 +27,56 @@
   // eslint-disable-next-line svelte/no-unnecessary-state-wrap
   let selectedRowIndices = $state<SvelteSet<number>>(new SvelteSet());
   let lastSelectedRowIndex = $state<number | null>(null);
-  
+
   let detailPanelOpen = $state(false);
   let detailColumnName = $state('');
   let detailValue = $state<unknown>(null);
 
-  let columnSizing = $state<Record<string, number>>({});
+  type ResolvedColumn = {
+    name: string;
+    dataType?: string;
+    width: number;
+    kind: SnowflakeColumnKind;
+    isNumeric: boolean;
+  };
 
-  $effect(() => {
-    const initialSizing: Record<string, number> = {};
-    columns.forEach(c => {
-      if (c.width) {
-        initialSizing[c.name] = c.width;
-      }
-    });
-    columnSizing = initialSizing;
-  });
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let tableColumns = $derived<ColumnDef<Row, any>[]>(
-    columns.map(col => {
-      const kind = classifyType(col.dataType);
-      const isNumeric = kind === 'number';
+  let resolved = $derived<ResolvedColumn[]>(
+    columns.map((c) => {
+      const kind = classifyType(c.dataType);
       return {
-        accessorKey: col.name,
-        header: col.name,
-        size: col.width || 160,
-        minSize: 50,
-        meta: { kind, isNumeric }
+        name: c.name,
+        dataType: c.dataType,
+        width: c.width ?? 160,
+        kind,
+        isNumeric: kind === 'number'
       };
     })
   );
-
-  const table = createTable({
-    _features: stockFeatures,
-    _rowModels: { coreRowModel: createCoreRowModel() },
-    get data() { return rows; },
-    get columns() { return tableColumns; },
-    columnResizeMode: 'onChange' as ColumnResizeMode,
-    state: {
-      get columnSizing() { return columnSizing; }
-    },
-    onColumnSizingChange: (updater: unknown) => {
-      if (typeof updater === 'function') {
-        columnSizing = updater(columnSizing);
-      } else {
-        columnSizing = updater as Record<string, number>;
-      }
-    }
-  });
-
-  let tableRowModel = $derived(table.getRowModel().rows);
 
   function handleRowClick(e: MouseEvent, index: number) {
     if (e.shiftKey && lastSelectedRowIndex !== null) {
       const start = Math.min(lastSelectedRowIndex, index);
       const end = Math.max(lastSelectedRowIndex, index);
-      const newSelection = new SvelteSet<number>(selectedRowIndices);
-      for (let i = start; i <= end; i++) {
-        newSelection.add(i);
-      }
-      selectedRowIndices = newSelection;
+      const next = new SvelteSet<number>(selectedRowIndices);
+      for (let i = start; i <= end; i++) next.add(i);
+      selectedRowIndices = next;
     } else if (e.metaKey || e.ctrlKey) {
-      const newSelection = new SvelteSet<number>(selectedRowIndices);
-      if (newSelection.has(index)) {
-        newSelection.delete(index);
-      } else {
-        newSelection.add(index);
-      }
-      selectedRowIndices = newSelection;
+      const next = new SvelteSet<number>(selectedRowIndices);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      selectedRowIndices = next;
     } else {
       selectedRowIndices = new SvelteSet<number>([index]);
     }
     lastSelectedRowIndex = index;
   }
 
-  function handleCellClick(e: MouseEvent, colName: string, value: unknown, isExpandable: boolean) {
+  function handleCellClick(
+    e: MouseEvent,
+    colName: string,
+    value: unknown,
+    isExpandable: boolean
+  ) {
     if (isExpandable) {
       e.stopPropagation();
       detailColumnName = colName;
@@ -120,22 +87,24 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
-      if (selectedRowIndices.size > 0) {
-        e.preventDefault();
-        const sortedIndices = Array.from(selectedRowIndices).sort((a, b) => a - b);
-        const tsvRows = sortedIndices.map(idx => {
+      if (selectedRowIndices.size === 0) return;
+      e.preventDefault();
+      const sortedIndices = Array.from(selectedRowIndices).sort((a, b) => a - b);
+      const tsv = sortedIndices
+        .map((idx) => {
           const row = rows[idx];
           if (!row) return '';
-          return columns.map(c => {
-            const val = row[c.name];
-            if (val === null || val === undefined) return '';
-            const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
-            return str.replace(/\t/g, ' ').replace(/\n/g, ' ');
-          }).join('\t');
-        });
-        const tsv = tsvRows.join('\n');
-        navigator.clipboard.writeText(tsv);
-      }
+          return columns
+            .map((c) => {
+              const val = row[c.name];
+              if (val === null || val === undefined) return '';
+              const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
+              return str.replace(/\t/g, ' ').replace(/\n/g, ' ');
+            })
+            .join('\t');
+        })
+        .join('\n');
+      void navigator.clipboard.writeText(tsv);
     }
   }
 
@@ -188,69 +157,54 @@
       </div>
     {/if}
 
-    {#if !loading && !error && rows.length === 0}
+    {#if !loading && !error && rows.length === 0 && columns.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-muted-foreground z-10">
         No rows
       </div>
     {/if}
 
     <div class="w-full h-full overflow-auto">
-      <table class="w-full border-collapse table-fixed" style="width: {table.getTotalSize()}px">
+      <table class="w-full border-collapse table-fixed">
         <thead class="sticky top-0 z-20 bg-muted shadow-sm">
-          {#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
-            <tr>
-              {#each headerGroup.headers as header (header.id)}
-                <th
-                  class="relative p-2 border-b border-r border-border text-xs font-semibold text-muted-foreground select-none whitespace-nowrap overflow-hidden text-ellipsis"
-                  style="width: {header.getSize()}px; text-align: {header.column.columnDef.meta?.isNumeric ? 'right' : 'left'}"
-                >
-                  {#if !header.isPlaceholder}
-                    <FlexRender header={header} />
-                  {/if}
-
-                  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-                  <div
-                    class="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/50 active:bg-primary z-10"
-                    onmousedown={header.getResizeHandler()}
-                    ontouchstart={header.getResizeHandler()}
-                    role="separator"
-                    tabindex="-1"
-                  ></div>
-                </th>
-              {/each}
-            </tr>
-          {/each}
+          <tr>
+            {#each resolved as col (col.name)}
+              <th
+                class="p-2 border-b border-r border-border text-xs font-semibold text-muted-foreground select-none whitespace-nowrap overflow-hidden text-ellipsis"
+                style="width: {col.width}px; text-align: {col.isNumeric ? 'right' : 'left'}"
+              >
+                {col.name}
+              </th>
+            {/each}
+          </tr>
         </thead>
 
         <tbody>
-          {#each tableRowModel as row, rowIndex (row.id)}
+          {#each rows as row, rowIndex (rowIndex)}
             {@const isSelected = selectedRowIndices.has(rowIndex)}
             <tr
               class="border-b border-border hover:bg-muted/50 cursor-pointer transition-colors {isSelected ? 'bg-accent hover:bg-accent/80' : ''}"
               onclick={(e) => handleRowClick(e, rowIndex)}
             >
-              {#each row.getVisibleCells() as cell (cell.id)}
-                {@const val = cell.getValue()}
-                {@const kind = cell.column.columnDef.meta?.kind || 'unknown'}
-                {@const { display, isExpandable } = formatCell(val, kind)}
+              {#each resolved as col (col.name)}
+                {@const val = row[col.name]}
+                {@const cell = formatCell(val, col.kind)}
                 {@const isNull = val === null || val === undefined}
-                {@const isBoolean = kind === 'boolean'}
-                
+                {@const isBoolean = col.kind === 'boolean'}
                 <td
                   class="p-2 border-r border-border text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                  style="width: {cell.column.getSize()}px; text-align: {cell.column.columnDef.meta?.isNumeric ? 'right' : 'left'}"
-                  title={!isExpandable ? display : undefined}
+                  style="width: {col.width}px; text-align: {col.isNumeric ? 'right' : 'left'}"
+                  title={!cell.isExpandable ? cell.display : undefined}
                 >
-                  {#if isExpandable}
+                  {#if cell.isExpandable}
                     <button
                       class="text-primary hover:underline text-left w-full truncate"
-                      onclick={(e) => handleCellClick(e, cell.column.id, val, isExpandable)}
+                      onclick={(e) => handleCellClick(e, col.name, val, true)}
                     >
-                      {display}
+                      {cell.display}
                     </button>
                   {:else}
-                    <span class="{isNull || isBoolean ? 'text-muted-foreground' : 'text-foreground'} {isNull ? 'italic' : ''}">
-                      {display}
+                    <span class={isNull || isBoolean ? 'text-muted-foreground' : 'text-foreground'} class:italic={isNull}>
+                      {cell.display}
                     </span>
                   {/if}
                 </td>
@@ -266,7 +220,7 @@
     <CellDetailPanel
       columnName={detailColumnName}
       value={detailValue}
-      onClose={() => detailPanelOpen = false}
+      onClose={() => (detailPanelOpen = false)}
     />
   {/if}
 </div>
