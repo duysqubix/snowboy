@@ -6,7 +6,6 @@
     type ColumnDef,
     type ColumnResizeMode
   } from '@tanstack/table-core';
-  import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { LoaderCircle, Download } from 'lucide-svelte';
   import { classifyType, formatCell } from './columnTypes';
   import { exportCsv } from './exportCsv';
@@ -32,7 +31,6 @@
     error?: string;
   } = $props();
 
-  let scrollEl: HTMLDivElement | null = $state(null);
   // eslint-disable-next-line svelte/no-unnecessary-state-wrap
   let selectedRowIndices = $state<SvelteSet<number>>(new SvelteSet());
   let lastSelectedRowIndex = $state<number | null>(null);
@@ -86,12 +84,7 @@
     }
   });
 
-  const virtualizer = createVirtualizer<HTMLDivElement, HTMLTableRowElement>({
-    get count() { return rows.length; },
-    getScrollElement: () => scrollEl,
-    estimateSize: () => 32,
-    overscan: 10
-  });
+  let tableRowModel = $derived(table.getRowModel().rows);
 
   function handleRowClick(e: MouseEvent, index: number) {
     if (e.shiftKey && lastSelectedRowIndex !== null) {
@@ -201,10 +194,7 @@
       </div>
     {/if}
 
-    <div
-      bind:this={scrollEl}
-      class="w-full h-full overflow-auto"
-    >
+    <div class="w-full h-full overflow-auto">
       <table class="w-full border-collapse table-fixed" style="width: {table.getTotalSize()}px">
         <thead class="sticky top-0 z-20 bg-muted shadow-sm">
           {#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
@@ -217,7 +207,7 @@
                   {#if !header.isPlaceholder}
                     <FlexRender header={header} />
                   {/if}
-                  
+
                   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                   <div
                     class="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/50 active:bg-primary z-10"
@@ -231,19 +221,13 @@
             </tr>
           {/each}
         </thead>
-        
-        <tbody
-          class="relative"
-          style="height: {$virtualizer.getTotalSize()}px"
-        >
-          {#each $virtualizer.getVirtualItems() as virtualRow (virtualRow.index)}
-            {@const row = table.getRowModel().rows[virtualRow.index]}
-            {@const isSelected = selectedRowIndices.has(virtualRow.index)}
-            {#if row}
+
+        <tbody>
+          {#each tableRowModel as row, rowIndex (row.id)}
+            {@const isSelected = selectedRowIndices.has(rowIndex)}
             <tr
-              class="absolute top-0 left-0 w-full border-b border-border hover:bg-muted/50 cursor-pointer transition-colors {isSelected ? 'bg-accent hover:bg-accent/80' : ''}"
-              style="height: {virtualRow.size}px; transform: translateY({virtualRow.start}px)"
-              onclick={(e) => handleRowClick(e, virtualRow.index)}
+              class="border-b border-border hover:bg-muted/50 cursor-pointer transition-colors {isSelected ? 'bg-accent hover:bg-accent/80' : ''}"
+              onclick={(e) => handleRowClick(e, rowIndex)}
             >
               {#each row.getVisibleCells() as cell (cell.id)}
                 {@const val = cell.getValue()}
@@ -272,7 +256,6 @@
                 </td>
               {/each}
             </tr>
-            {/if}
           {/each}
         </tbody>
       </table>

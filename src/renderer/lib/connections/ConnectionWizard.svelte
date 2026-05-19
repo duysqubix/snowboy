@@ -4,6 +4,7 @@
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { profiles } from '../stores/profiles.svelte';
+  import { sessions } from '../stores/sessions.svelte';
   import { normalizeAccountUrl, validateProfile } from './validation';
   import type { ConnectionProfile, AuthMethod } from '../../../main/types';
   import { toast } from 'svelte-sonner';
@@ -170,15 +171,17 @@
 
     isTesting = true;
     try {
-      const result = await profiles.test(
-        savedProfile.id,
-        needsPasscode ? passcode.trim() : undefined
-      );
-      if (result.ok) {
-        onConnect(savedProfile);
+      if (needsPasscode) {
+        await sessions.openWithPasscode(savedProfile.id, passcode.trim());
       } else {
-        toast.error(result.message || 'Connection failed');
+        const result = await profiles.test(savedProfile.id);
+        if (!result.ok) {
+          toast.error(result.message || 'Connection failed');
+          return;
+        }
       }
+      profiles.setActive(savedProfile.id);
+      onConnect(savedProfile);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Connection failed');
     } finally {

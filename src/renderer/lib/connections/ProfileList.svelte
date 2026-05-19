@@ -3,6 +3,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
   import { profiles } from '../stores/profiles.svelte';
+  import { sessions } from '../stores/sessions.svelte';
   import type { ConnectionProfile } from '../../../main/types';
   import { Trash2 } from 'lucide-svelte';
   import MfaPromptDialog from './MfaPromptDialog.svelte';
@@ -41,13 +42,13 @@
   async function handleMfaSubmit(passcode: string): Promise<void> {
     if (!mfaProfile) return;
     const profile = mfaProfile;
-    const result = await profiles.test(profile.id, passcode);
-    if (result.ok) {
+    try {
+      await sessions.openWithPasscode(profile.id, passcode);
       mfaOpen = false;
       mfaProfile = null;
       onConnect(profile);
-    } else {
-      toast.error(result.message || 'Connection failed');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Connection failed');
     }
   }
 </script>

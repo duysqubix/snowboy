@@ -136,7 +136,10 @@
   <ConnectionDialog
     open={connectionsOpen}
     onOpenChange={(v) => (connectionsOpen = v)}
-    onConnect={(p) => toast.success(`Connected to ${p.name}`)}
+    onConnect={(p) => {
+      profiles.setActive(p.id);
+      toast.success(`Connected to ${p.name}`);
+    }}
   />
 
   <MfaPromptDialog
