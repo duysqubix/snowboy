@@ -29,16 +29,17 @@
   let expanded = $state(false);
   let loading = $state(false);
   let error = $state<string | null>(null);
+  let children = $state<BrowserNode[] | undefined>(undefined);
 
   async function toggleExpand() {
     if (!node.hasChildren) return;
 
     if (!expanded) {
-      if (node.children === undefined) {
+      if (children === undefined) {
         loading = true;
         error = null;
         try {
-          node.children = await loadChildren(node);
+          children = await loadChildren(node);
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
           loading = false;
@@ -54,7 +55,7 @@
 
   async function retry() {
     error = null;
-    node.children = undefined;
+    children = undefined;
     await toggleExpand();
   }
 
@@ -140,9 +141,9 @@
     {/if}
   </div>
 
-  {#if expanded && node.children}
+  {#if expanded && children}
     <div>
-      {#each node.children as child (child.id)}
+      {#each children as child (child.id)}
         <TreeNode
           node={child}
           level={level + 1}
@@ -150,7 +151,7 @@
           {onContextMenu}
         />
       {/each}
-      {#if node.children.length === 0}
+      {#if children.length === 0}
         <div
           class="px-2 py-1 text-xs text-muted-foreground italic"
           style="padding-left: {(level + 1) * 12 + 8}px"
