@@ -19,10 +19,25 @@ The v0.1 MVP must deliver a single-account Snowflake IDE that fixes the user's p
 |---|---|---|---|
 | Wave 0 — bootstrap | ✅ Complete | `343af55` | T0.1 repo scaffold, T0.2 native module gate (snowflake-sdk + better-sqlite3 rebuilt under Electron 32 ABI), T0.3 Playwright visual smoke test |
 | Wave 1 — foundation | ✅ Complete | `8154ca2` | T1.1 typed IPC, T1.2 safeStorage, T1.3 SQLite + 5-table schema + migrations, T1.4 Snowflake driver (Session + Pool + 3 auth flows + streaming), T1.5+T1.6 shadcn-svelte v2 (13 components) + app shell. Wall-clock ~25 min via 5 parallel sub-agents. |
-| **Wave 2 — UI components** | ⏳ **Next** | — | 8 tasks (T2.1–T2.8). See §13 for recommended parallel grouping. |
-| Wave 3 — wiring | ⏳ Pending | — | 7 tasks (T3.1–T3.7) — first wave that actually moves data through the stack |
-| Wave 4 — persistence & polish | ⏳ Pending | — | 5 tasks (T4.1–T4.5) |
+| Wave 2 — UI components | ✅ Complete | `cbb5954` | 8 tasks T2.1–T2.8 delivered via parallel sub-agents (Bucket D recovered manually after agent failure). |
+| Wave 3 — wiring | ✅ Complete | `db2cb83` | 7 tasks T3.1–T3.7 + significant post-Wave-3 polish chain (see notes below). Real Snowflake round-trip working end-to-end with PAT auth: profiles → sessions → query.run → tabbed multi-statement results → Object Browser tree → DDL viewer. |
+| **Wave 4 — persistence & polish** | ⏳ **Next** | — | 5 tasks (T4.1–T4.5) |
 | Wave 5 — packaging & release | ⏳ Pending | — | 5 tasks (T5.1–T5.5) |
+
+**Post-Wave 3 polish chain** (between `d9651ef` and `db2cb83`, ~20 commits):
+- T3.1+T3.2 wired but **wizard didn't collect password** initially — `429a132` retroactively added the password field + `setPassword` IPC + `safeStorage` keyed by `profile:${id}:password`
+- TOTP MFA passcode flow added (`ffdd9dd` + `8ff1ae9`): wizard captures one-shot passcode, MfaPromptDialog reusable component, sessions store `'needs-mfa'` status auto-opens dialog after profile activation
+- Multi-statement client-side splitter + tabbed results (`fe8743f` + `564c232`): `splitSql.ts` handles Snowflake quoting/dollar-tags/comments, 17 edge-case unit tests, ResultsTabs renders one tab per `;`-separated statement
+- TanStack svelte-table v9-alpha + Svelte 5 produced three separate reactivity bugs over the course of Wave 3 → permanently removed in `f220a9d`, ResultsGrid now plain `<table>`. Bundle dropped from ~1.93 MB → ~1.75 MB. **Do not reintroduce TanStack with Svelte 5 in v0.1.** Wave 4 retries virtualization with a different backend.
+- MFA token caching enabled with `clientStoreTemporaryCredential` + `clientRequestMfaToken` (`2c53400`); but token cache persistence across launches is unreliable on Windows in our setup — filed as [GH Issue #1](https://github.com/duysqubix/snowboy/issues/1), accepted per-launch MFA in v0.1.
+- **PAT (Programmatic Access Token) auth added** (`db2cb83` chain): fourth auth method using `authenticator: 'PROGRAMMATIC_ACCESS_TOKEN'` with the PAT in the `token` field. Stored in same safeStorage slot as password. Strips role from connect options (PATs are role-bound at creation). Wizard hides Default Role for PAT, adds "How to create a PAT ↗" link to docs.snowflake.com. **This is now the user's preferred auth method** since it bypasses MFA entirely and persists across launches.
+- Five last-mile bugs discovered while validating against real Snowflake:
+  1. Schema cache returned stale empty results → cache removed (`7ac899f`); Wave 4 reintroduces with proper invalidation + Refresh button
+  2. Renderer's `#byProfile = $state<Map<...>>` was non-reactive — Svelte 5 doesn't track native `Map.set()` mutations → switched to `SvelteMap` from `svelte/reactivity` (`b3aae20`). This was THE bug behind "No databases found" persisting for hours.
+  3. `TreeNode.svelte` mutated parent's `node.children` prop → `ownership_invalid_mutation` warning + broken expand UI → moved children to local `$state` (`aa30cfe`)
+  4. `streamWindows` short-circuited at `getNumRows() <= 0` without emitting any batch → `runQueryRows` had empty columns, `requireColumnIndex` threw on `SHOW VIEWS` in empty schemas → now emits one empty batch carrying columns (`e3b5e9a`). Bonus: worksheet ResultsGrid now shows column headers + "0 rows" for empty `SELECT`s.
+  5. DDL dialog passed a `$state`-wrapped `ObjectRef` proxy across IPC → Electron's structured-clone threw "An object could not be cloned" → `$state.snapshot(ref)` before the IPC call (`db2cb83`)
+- e2e visual smoke held green across all 20 commits. 187 unit tests passing.
 
 **Known decisions made post-plan**:
 - Renderer entry is `src/renderer/index.html` (not `app.html`) — Vite dev server needs the conventional name to serve at `/`.
