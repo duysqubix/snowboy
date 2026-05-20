@@ -45,7 +45,7 @@
     error = null;
     ddlText = '';
     try {
-      ddlText = await snowboy.schema.getDDL(sid, ref);
+      ddlText = await snowboy.schema.getDDL(sid, $state.snapshot(ref));
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
