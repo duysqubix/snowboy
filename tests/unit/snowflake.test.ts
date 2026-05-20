@@ -383,7 +383,9 @@ describe('Session.runStreaming', () => {
       );
       await handle.queryIdPromise;
       await waitFor(() => completed.length === 1);
-      expect(batches).toHaveLength(0);
+      expect(batches).toHaveLength(1);
+      expect(batches[0]?.rows).toHaveLength(0);
+      expect(batches[0]?.columns).toHaveLength(1);
       expect(completed[0]?.rowCount).toBe(0);
     } finally {
       await session.close();

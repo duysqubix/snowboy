@@ -61,6 +61,9 @@ export async function streamWindows(
 
   const total = statement.getNumRows();
   if (total <= 0) {
+    if (!onAbort()) {
+      emit({ rows: [], columns, offset: 0 });
+    }
     return 0;
   }
 
