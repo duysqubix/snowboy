@@ -46,6 +46,7 @@
     const sid = sessionId;
     console.log('[ObjectBrowser] $effect fired, sessionId=', sid, 'lastLoaded=', lastLoadedSessionId);
     if (sid === null) {
+      console.warn('[ObjectBrowser] WIPING rootNodes because sessionId is null');
       rootNodes = [];
       rootError = null;
       lastLoadedSessionId = null;
@@ -54,6 +55,10 @@
     if (sid === lastLoadedSessionId) return;
     lastLoadedSessionId = sid;
     void loadDatabases(sid);
+  });
+
+  $effect(() => {
+    console.log('[ObjectBrowser] rootNodes mutated, length=', rootNodes.length);
   });
 
   async function loadDatabases(sid: SessionId): Promise<void> {
