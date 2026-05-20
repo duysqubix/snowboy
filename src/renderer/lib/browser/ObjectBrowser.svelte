@@ -40,8 +40,11 @@
 
   let lastLoadedSessionId: SessionId | null = null;
 
+  console.log('[ObjectBrowser] component initialized');
+
   $effect(() => {
     const sid = sessionId;
+    console.log('[ObjectBrowser] $effect fired, sessionId=', sid, 'lastLoaded=', lastLoadedSessionId);
     if (sid === null) {
       rootNodes = [];
       rootError = null;
@@ -54,10 +57,12 @@
   });
 
   async function loadDatabases(sid: SessionId): Promise<void> {
+    console.log('[ObjectBrowser] loadDatabases START sid=', sid);
     rootLoading = true;
     rootError = null;
     try {
       const dbs = await snowboy.schema.listDatabases(sid);
+      console.log('[ObjectBrowser] loadDatabases got dbs=', dbs, 'length=', dbs.length);
       rootNodes = dbs.map((name) => ({
         id: `db:${name}`,
         name,
@@ -66,10 +71,12 @@
         hasChildren: true
       }));
     } catch (err) {
+      console.error('[ObjectBrowser] loadDatabases ERROR', err);
       rootError = err instanceof Error ? err.message : String(err);
       rootNodes = [];
     } finally {
       rootLoading = false;
+      console.log('[ObjectBrowser] loadDatabases END, rootNodes.length=', rootNodes.length, 'rootError=', rootError);
     }
   }
 

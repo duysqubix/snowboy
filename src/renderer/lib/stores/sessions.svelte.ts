@@ -67,6 +67,7 @@ class SessionsStore {
    * methods auto-open.
    */
   async syncToActiveProfile(profileId: string | null): Promise<void> {
+    console.log('[sessions] syncToActiveProfile called, profileId=', profileId);
     this.#activeProfileId = profileId;
     if (profileId === null) {
       this.#status = 'idle';
@@ -74,6 +75,7 @@ class SessionsStore {
       return;
     }
     if (this.#byProfile.has(profileId)) {
+      console.log('[sessions] reusing existing session for profile', profileId, 'sid=', this.#byProfile.get(profileId)?.sessionId);
       this.#status = 'ready';
       this.#lastError = null;
       return;
@@ -88,7 +90,9 @@ class SessionsStore {
     const isMfa = profile?.authMethod === 'password_mfa';
 
     try {
+      console.log('[sessions] opening new session for profile', profileId);
       const sessionId = await snowboy.sessions.open(profileId, initialContext);
+      console.log('[sessions] opened sessionId=', sessionId);
       this.#byProfile.set(profileId, { sessionId, openedAt: Date.now() });
       if (this.#activeProfileId === profileId) {
         this.#status = 'ready';
