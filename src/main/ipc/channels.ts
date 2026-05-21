@@ -66,7 +66,10 @@ export const CHANNELS = {
     changed: 'theme.changed'
   },
   sessionsExt: {
-    getEffectiveContext: 'sessions.get-effective-context'
+    getEffectiveContext: 'sessions.get-effective-context',
+    events: {
+      effectiveContextChanged: 'sessions.effective-context-changed'
+    }
   }
 } as const;
 

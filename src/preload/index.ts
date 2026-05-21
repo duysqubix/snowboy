@@ -180,7 +180,10 @@ const api = {
   },
   sessionsExt: {
     getEffectiveContext: (sessionId: SessionId): Promise<EffectiveContext | null> =>
-      ipcRenderer.invoke(CHANNELS.sessionsExt.getEffectiveContext, sessionId)
+      ipcRenderer.invoke(CHANNELS.sessionsExt.getEffectiveContext, sessionId),
+    onEffectiveContextChanged: makeEventBridge<{ sessionId: SessionId }>(
+      CHANNELS.sessionsExt.events.effectiveContextChanged
+    )
   },
   settings: {
     get: (): Promise<Settings> => ipcRenderer.invoke(CHANNELS.settings.get),

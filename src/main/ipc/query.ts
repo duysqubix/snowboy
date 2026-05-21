@@ -116,6 +116,12 @@ function toResultColumns(cols: readonly ColumnMeta[]): ResultColumn[] {
   return out;
 }
 
+const USE_CONTEXT_PATTERN = /^\s*USE\s+(DATABASE|SCHEMA|WAREHOUSE|ROLE)\b/i;
+
+function isContextChangingSql(sql: string): boolean {
+  return USE_CONTEXT_PATTERN.test(sql);
+}
+
 function rowsToObjects(
   rows: readonly unknown[][],
   columns: readonly ColumnMeta[]
@@ -209,6 +215,10 @@ export async function run(
         });
       } catch (historyErr) {
         console.warn('[query] failed to update history on complete', historyErr);
+      }
+      if (isContextChangingSql(sql)) {
+        session.invalidateEffectiveContext();
+        sendEvent(CHANNELS.sessionsExt.events.effectiveContextChanged, { sessionId });
       }
       sendEvent(CHANNELS.queryEvents.complete, {
         queryId,

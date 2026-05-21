@@ -62,6 +62,7 @@ interface FakeSessionHooks {
 
 interface CapturedSession extends Session {
   __callbacks: () => StreamingCallbacks | null;
+  __invalidateCount: () => number;
 }
 
 function makeFakeSession(
@@ -71,6 +72,7 @@ function makeFakeSession(
 ): CapturedSession {
   const sid = asSessionId(id);
   let captured: StreamingCallbacks | null = null;
+  let invalidateCount = 0;
   const fake = {
     getId: () => sid,
     getProfileId: () => profileId,
@@ -100,7 +102,11 @@ function makeFakeSession(
     setContext: async () => {},
     cancelQuery: async () => {},
     close: async () => {},
-    __callbacks: () => captured
+    invalidateEffectiveContext: () => {
+      invalidateCount += 1;
+    },
+    __callbacks: () => captured,
+    __invalidateCount: () => invalidateCount
   };
   return fake as unknown as CapturedSession;
 }
@@ -352,5 +358,65 @@ describe('query lifecycle history (T3.6 round-trip)', () => {
     expect(() => session.__callbacks()!.onBatch(fakeBatch([[1, 'a']]))).not.toThrow();
     expect(() => session.__callbacks()!.onComplete(fakeCompleteEvent())).not.toThrow();
     expect(getHistory(queryId)?.status).toBe('success');
+  });
+});
+
+describe('USE-statement post-execute hook (B3)', () => {
+  test('USE DATABASE invalidates effective context and broadcasts change', async () => {
+    const session = makeFakeSession('s-use-db', 'prof-1');
+    const sessionId = await openTestSession(session);
+    await run(sessionId, 'USE DATABASE FOO');
+
+    expect(session.__invalidateCount()).toBe(0);
+    session.__callbacks()!.onComplete(fakeCompleteEvent());
+
+    expect(session.__invalidateCount()).toBe(1);
+    const changeEvents = fakeWindow.sent.filter(
+      (e) => e.channel === CHANNELS.sessionsExt.events.effectiveContextChanged
+    );
+    expect(changeEvents.length).toBe(1);
+    expect(changeEvents[0]!.payload).toEqual({ sessionId });
+  });
+
+  test('USE WAREHOUSE / SCHEMA / ROLE all trigger the hook', async () => {
+    for (const sql of [
+      'USE WAREHOUSE WH_XL',
+      'USE SCHEMA PUBLIC',
+      'USE ROLE SYSADMIN',
+      '  use database lower_ok'
+    ]) {
+      const session = makeFakeSession(`s-${sql.length}`, 'prof-1');
+      const sessionId = await openTestSession(session);
+      await run(sessionId, sql);
+      session.__callbacks()!.onComplete(fakeCompleteEvent());
+      expect(session.__invalidateCount()).toBe(1);
+      __clearSessionsForTesting();
+      __setSessionFactoryForTesting(null);
+      void sessionId;
+    }
+  });
+
+  test('non-USE statements do not invalidate effective context', async () => {
+    const session = makeFakeSession('s-select', 'prof-1');
+    const sessionId = await openTestSession(session);
+    await run(sessionId, 'SELECT 1');
+
+    session.__callbacks()!.onComplete(fakeCompleteEvent());
+
+    expect(session.__invalidateCount()).toBe(0);
+    const changeEvents = fakeWindow.sent.filter(
+      (e) => e.channel === CHANNELS.sessionsExt.events.effectiveContextChanged
+    );
+    expect(changeEvents.length).toBe(0);
+  });
+
+  test('USE-looking identifiers do not trigger the hook (word boundary)', async () => {
+    const session = makeFakeSession('s-useless', 'prof-1');
+    const sessionId = await openTestSession(session);
+    await run(sessionId, 'SELECT * FROM USEFUL_DATA');
+
+    session.__callbacks()!.onComplete(fakeCompleteEvent());
+
+    expect(session.__invalidateCount()).toBe(0);
   });
 });

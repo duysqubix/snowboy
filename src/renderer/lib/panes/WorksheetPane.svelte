@@ -152,6 +152,23 @@
     }
   });
 
+  $effect(() => {
+    const effective = sessions.effectiveContextFor(sessions.activeSessionId);
+    if (effective === null) return;
+    if ((paneState.role === undefined || paneState.role === '') && effective.role) {
+      paneState.role = effective.role;
+    }
+    if ((paneState.warehouse === undefined || paneState.warehouse === '') && effective.warehouse) {
+      paneState.warehouse = effective.warehouse;
+    }
+    if ((paneState.database === undefined || paneState.database === '') && effective.database) {
+      paneState.database = effective.database;
+    }
+    if ((paneState.schema === undefined || paneState.schema === '') && effective.schema) {
+      paneState.schema = effective.schema;
+    }
+  });
+
   function handleEditorChange(v: string): void {
     paneState.body = v;
     paneState.dirty = true;

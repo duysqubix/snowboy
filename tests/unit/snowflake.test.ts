@@ -528,6 +528,161 @@ describe('Session.runStreaming', () => {
   });
 });
 
+describe('Session.getEffectiveContext', () => {
+  const effectiveColumns = [
+    fakeColumn('role', 'TEXT'),
+    fakeColumn('warehouse', 'TEXT'),
+    fakeColumn('database', 'TEXT'),
+    fakeColumn('schema', 'TEXT'),
+  ];
+
+  function makeEffectiveSdk(
+    rowProvider: () => unknown[][],
+  ): { sdk: SnowflakeSdkLike; selectCount: () => number; useCount: () => number } {
+    let selects = 0;
+    let uses = 0;
+    const ctl = makeFakeSdk({
+      executeImpl: (opts) => {
+        if (opts.sqlText.startsWith('SELECT CURRENT_ROLE')) {
+          selects += 1;
+          const rows = rowProvider();
+          return {
+            getQueryId: () => `qid-eff-${selects}`,
+            getNumRows: () => rows.length,
+            getColumns: () => effectiveColumns,
+            getSessionState: () => undefined,
+            streamRows: () => Readable.from(rows),
+          };
+        }
+        if (opts.sqlText.startsWith('USE ')) {
+          uses += 1;
+        }
+        return defaultStmt();
+      },
+    });
+    return { sdk: ctl.sdk, selectCount: () => selects, useCount: () => uses };
+  }
+
+  test('parses CURRENT_* row into EffectiveContext', async () => {
+    const ctl = makeEffectiveSdk(() => [['ACCOUNTADMIN', 'COMPUTE_WH', 'DEMO_DB', 'PUBLIC']]);
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      const ctx = await session.getEffectiveContext();
+      expect(ctx).toEqual({
+        role: 'ACCOUNTADMIN',
+        warehouse: 'COMPUTE_WH',
+        database: 'DEMO_DB',
+        schema: 'PUBLIC',
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test('maps NULL CURRENT_* columns to absent fields (undefined)', async () => {
+    const ctl = makeEffectiveSdk(() => [[null, null, null, null]]);
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      const ctx = await session.getEffectiveContext();
+      expect(ctx.role).toBeUndefined();
+      expect(ctx.warehouse).toBeUndefined();
+      expect(ctx.database).toBeUndefined();
+      expect(ctx.schema).toBeUndefined();
+      expect(Object.keys(ctx)).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test('caches the result; second call issues no extra SDK round-trip', async () => {
+    const ctl = makeEffectiveSdk(() => [['R', 'W', 'D', 'S']]);
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      const first = await session.getEffectiveContext();
+      const second = await session.getEffectiveContext();
+      expect(ctl.selectCount()).toBe(1);
+      expect(first).toEqual(second);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test('invalidateEffectiveContext forces a refetch on the next call', async () => {
+    let row: unknown[] = ['R1', 'W1', 'D1', 'S1'];
+    const ctl = makeEffectiveSdk(() => [row]);
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      const first = await session.getEffectiveContext();
+      expect(first.role).toBe('R1');
+
+      row = ['R2', 'W2', 'D2', 'S2'];
+      session.invalidateEffectiveContext();
+
+      const second = await session.getEffectiveContext();
+      expect(ctl.selectCount()).toBe(2);
+      expect(second).toEqual({ role: 'R2', warehouse: 'W2', database: 'D2', schema: 'S2' });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test('setContext invalidates the cache so the next getEffectiveContext refetches', async () => {
+    let row: unknown[] = ['R1', 'W1', 'D1', 'S1'];
+    const ctl = makeEffectiveSdk(() => [row]);
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      await session.getEffectiveContext();
+      expect(ctl.selectCount()).toBe(1);
+
+      row = ['R1', 'BIG_WH', 'D1', 'S1'];
+      await session.setContext({ warehouse: 'BIG_WH' });
+
+      const updated = await session.getEffectiveContext();
+      expect(ctl.selectCount()).toBe(2);
+      expect(updated.warehouse).toBe('BIG_WH');
+    } finally {
+      await session.close();
+    }
+  });
+
+  test('issues exactly one 4-column SELECT (not 4 separate queries)', async () => {
+    const ctl = makeFakeSdk({
+      executeImpl: (opts) => {
+        if (opts.sqlText.startsWith('SELECT CURRENT_ROLE')) {
+          return {
+            getQueryId: () => 'q',
+            getNumRows: () => 1,
+            getColumns: () => [
+              fakeColumn('role', 'TEXT'),
+              fakeColumn('warehouse', 'TEXT'),
+              fakeColumn('database', 'TEXT'),
+              fakeColumn('schema', 'TEXT'),
+            ],
+            getSessionState: () => undefined,
+            streamRows: () => Readable.from([['A', 'B', 'C', 'D']]),
+          };
+        }
+        return defaultStmt();
+      },
+    });
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      await session.getEffectiveContext();
+      const selects = ctl.log.filter(
+        (e) => e.kind === 'execute' && typeof e.sql === 'string' && e.sql.includes('CURRENT_ROLE'),
+      );
+      expect(selects).toHaveLength(1);
+      const sql = selects[0]!.sql ?? '';
+      expect(sql).toContain('CURRENT_ROLE()');
+      expect(sql).toContain('CURRENT_WAREHOUSE()');
+      expect(sql).toContain('CURRENT_DATABASE()');
+      expect(sql).toContain('CURRENT_SCHEMA()');
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe('SessionPool', () => {
   test('keys by (profileId, role, warehouse) and reuses sessions', async () => {
     let opens = 0;

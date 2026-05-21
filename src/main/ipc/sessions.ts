@@ -30,7 +30,6 @@
 
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
-import { notImplemented } from './errors';
 import { getProfile as storageGetProfile } from '../storage/profiles';
 import { getSecret } from '../secrets/safeStorage';
 import { Session, type OpenSessionOptions } from '../snowflake/session';
@@ -39,7 +38,7 @@ import type {
   SessionContext as DriverSessionContext,
   SessionId as DriverSessionId
 } from '../snowflake/types';
-import type { SessionContext, SessionId } from '../types';
+import type { EffectiveContext, SessionContext, SessionId } from '../types';
 
 /**
  * Session factory shape — matches `Session.open`. The indirection
@@ -271,6 +270,15 @@ export async function setSessionContext(
   await session.setContext(toDriverContextPatch(partial ?? {}));
 }
 
+export async function getEffectiveContext(
+  sessionId: SessionId
+): Promise<EffectiveContext | null> {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return null;
+  const session = sessions.get(sessionId);
+  if (session === undefined) return null;
+  return session.getEffectiveContext();
+}
+
 /**
  * Drain the registry on shutdown. Errors during individual closes are
  * logged but do not abort the loop — every session gets a chance to
@@ -311,8 +319,9 @@ export function register(ipcMain: IpcMain): void {
     (_event, sessionId: SessionId, context: Partial<SessionContext>) =>
       setSessionContext(sessionId, context)
   );
-  ipcMain.handle(CHANNELS.sessionsExt.getEffectiveContext, () =>
-    notImplemented('sessions.getEffectiveContext', 'B3')
+  ipcMain.handle(
+    CHANNELS.sessionsExt.getEffectiveContext,
+    (_event, sessionId: SessionId) => getEffectiveContext(sessionId)
   );
 
   // The before-quit shutdown is owned by src/main/index.ts as part of the

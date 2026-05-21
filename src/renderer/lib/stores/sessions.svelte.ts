@@ -18,7 +18,7 @@
  */
 
 import { SvelteMap } from 'svelte/reactivity';
-import type { SessionContext, SessionId } from '../../../main/types';
+import type { EffectiveContext, SessionContext, SessionId } from '../../../main/types';
 import { snowboy } from '../ipc/client';
 import { profiles } from './profiles.svelte';
 
@@ -41,6 +41,7 @@ type SessionStatus = 'idle' | 'opening' | 'ready' | 'error' | 'needs-mfa';
 
 class SessionsStore {
   #byProfile = new SvelteMap<string, SessionEntry>();
+  #effectiveContext = new SvelteMap<SessionId, EffectiveContext>();
   #status = $state<SessionStatus>('idle');
   #activeProfileId = $state<string | null>(null);
   #lastError = $state<string | null>(null);
@@ -57,6 +58,21 @@ class SessionsStore {
 
   get lastError(): string | null {
     return this.#lastError;
+  }
+
+  effectiveContextFor(sessionId: SessionId | null): EffectiveContext | null {
+    if (sessionId === null) return null;
+    return this.#effectiveContext.get(sessionId) ?? null;
+  }
+
+  async fetchEffectiveContext(sessionId: SessionId): Promise<void> {
+    try {
+      const ctx = await snowboy.sessionsExt.getEffectiveContext(sessionId);
+      if (ctx === null) return;
+      this.#effectiveContext.set(sessionId, ctx);
+    } catch (err) {
+      console.warn('[sessions] fetchEffectiveContext failed', err);
+    }
   }
 
   /**
@@ -91,6 +107,7 @@ class SessionsStore {
     try {
       const sessionId = await snowboy.sessions.open(profileId, initialContext);
       this.#byProfile.set(profileId, { sessionId, openedAt: Date.now() });
+      void this.fetchEffectiveContext(sessionId);
       if (this.#activeProfileId === profileId) {
         this.#status = 'ready';
       }
@@ -136,6 +153,7 @@ class SessionsStore {
     try {
       const sessionId = await snowboy.sessions.open(profileId, {}, passcode);
       this.#byProfile.set(profileId, { sessionId, openedAt: Date.now() });
+      void this.fetchEffectiveContext(sessionId);
       if (this.#activeProfileId === profileId) {
         this.#status = 'ready';
       }
@@ -156,6 +174,7 @@ class SessionsStore {
     const entry = this.#byProfile.get(profileId);
     if (entry === undefined) return;
     this.#byProfile.delete(profileId);
+    this.#effectiveContext.delete(entry.sessionId);
     if (this.#activeProfileId === profileId) {
       this.#status = 'idle';
     }
@@ -169,6 +188,7 @@ class SessionsStore {
   async closeAll(): Promise<void> {
     const entries = Array.from(this.#byProfile.values());
     this.#byProfile.clear();
+    this.#effectiveContext.clear();
     this.#status = 'idle';
     await Promise.all(
       entries.map(async (e) => {
@@ -195,7 +215,11 @@ export function installSessionsBridge(): () => void {
     const id = profiles.activeProfileId;
     void sessions.syncToActiveProfile(id);
   });
+  const unsubscribe = snowboy.sessionsExt.onEffectiveContextChanged((event) => {
+    void sessions.fetchEffectiveContext(event.sessionId);
+  });
   return () => {
+    unsubscribe();
     void sessions.closeAll();
   };
 }

@@ -3,6 +3,7 @@ import { buildConnectOptions } from './auth';
 import {
   type ColumnMeta,
   type ConnectionProfileLite,
+  type RowBatch,
   type RunOptions,
   type SessionContext,
   type SessionId,
@@ -10,6 +11,7 @@ import {
   type StreamingHandle,
   asSessionId,
 } from './types';
+import type { EffectiveContext } from '../types';
 
 type SessionContextPatch = { -readonly [K in keyof SessionContext]?: SessionContext[K] };
 import {
@@ -65,6 +67,15 @@ function quoteIdent(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
+function effectiveColumnIndex(columns: readonly ColumnMeta[], name: string): number {
+  const target = name.toLowerCase();
+  for (let i = 0; i < columns.length; i++) {
+    const col = columns[i];
+    if (col !== undefined && col.name.toLowerCase() === target) return i;
+  }
+  return -1;
+}
+
 /**
  * Runtime wrapper around a single snowflake-sdk Connection.
  *
@@ -79,6 +90,13 @@ export class Session {
   private context: SessionContext;
   private closed = false;
   private running = false;
+  /**
+   * Wave 4 B3 — cached SDK-resolved CURRENT_ROLE / WAREHOUSE / DATABASE /
+   * SCHEMA. `null` means "no fetch since last invalidation"; the next
+   * `getEffectiveContext` call re-queries Snowflake. Reset by
+   * `setContext` and by `query.run`'s post-execute USE hook.
+   */
+  private effectiveContext: EffectiveContext | null = null;
 
   private constructor(
     id: SessionId,
@@ -157,6 +175,61 @@ export class Session {
       await this.executePromise(sql);
     }
     this.context = { ...this.context, ...patch };
+    this.invalidateEffectiveContext();
+  }
+
+  invalidateEffectiveContext(): void {
+    this.effectiveContext = null;
+  }
+
+  async getEffectiveContext(): Promise<EffectiveContext> {
+    this.ensureOpen();
+    if (this.effectiveContext !== null) {
+      return { ...this.effectiveContext };
+    }
+    const sql =
+      'SELECT CURRENT_ROLE() AS "role", CURRENT_WAREHOUSE() AS "warehouse", ' +
+      'CURRENT_DATABASE() AS "database", CURRENT_SCHEMA() AS "schema"';
+    const { row, columns } = await this.runOneRow(sql);
+    const fresh: EffectiveContext = {};
+    if (row !== null) {
+      const roleIdx = effectiveColumnIndex(columns, 'role');
+      const whIdx = effectiveColumnIndex(columns, 'warehouse');
+      const dbIdx = effectiveColumnIndex(columns, 'database');
+      const schemaIdx = effectiveColumnIndex(columns, 'schema');
+      const role = roleIdx === -1 ? null : row[roleIdx];
+      const warehouse = whIdx === -1 ? null : row[whIdx];
+      const database = dbIdx === -1 ? null : row[dbIdx];
+      const schema = schemaIdx === -1 ? null : row[schemaIdx];
+      if (typeof role === 'string' && role.length > 0) fresh.role = role;
+      if (typeof warehouse === 'string' && warehouse.length > 0) fresh.warehouse = warehouse;
+      if (typeof database === 'string' && database.length > 0) fresh.database = database;
+      if (typeof schema === 'string' && schema.length > 0) fresh.schema = schema;
+    }
+    this.effectiveContext = fresh;
+    return { ...fresh };
+  }
+
+  private runOneRow(sql: string): Promise<{ row: unknown[] | null; columns: readonly ColumnMeta[] }> {
+    return new Promise((resolve, reject) => {
+      const collected: unknown[][] = [];
+      let columns: readonly ColumnMeta[] = [];
+      let settled = false;
+      const settle = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
+      this.runStreaming(sql, {}, {
+        onBatch: (batch: RowBatch) => {
+          if (columns.length === 0) columns = batch.columns;
+          for (const r of batch.rows) collected.push(r.slice() as unknown[]);
+        },
+        onComplete: () => settle(() => resolve({ row: collected[0] ?? null, columns })),
+        onError: (err) => settle(() => reject(err)),
+        onCancel: () => settle(() => reject(new Error('getEffectiveContext: query cancelled'))),
+      });
+    });
   }
 
   async cancelQuery(queryId: string): Promise<void> {

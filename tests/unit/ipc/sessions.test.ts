@@ -9,6 +9,7 @@ import {
   __setSessionFactoryForTesting,
   closeAllSessions,
   closeSession,
+  getEffectiveContext,
   getSession,
   openSession,
   setSessionContext,
@@ -27,7 +28,7 @@ import type {
   ConnectionProfileLite,
   SessionContext as DriverSessionContext
 } from '../../../src/main/snowflake/types';
-import type { SessionId } from '../../../src/main/types';
+import type { EffectiveContext, SessionId } from '../../../src/main/types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = resolve(HERE, '../../../src/main/storage/migrations');
@@ -50,6 +51,7 @@ interface FakeSessionConfig {
   profileId?: string;
   closeImpl?: () => Promise<void> | void;
   setContextImpl?: (patch: Partial<DriverSessionContext>) => Promise<void> | void;
+  getEffectiveContextImpl?: () => Promise<EffectiveContext> | EffectiveContext;
 }
 
 function makeFakeSession(config: FakeSessionConfig = {}): Session {
@@ -63,6 +65,11 @@ function makeFakeSession(config: FakeSessionConfig = {}): Session {
     },
     setContext: async (patch: Partial<DriverSessionContext>) => {
       await config.setContextImpl?.(patch);
+    },
+    getEffectiveContext: async (): Promise<EffectiveContext> => {
+      const impl = config.getEffectiveContextImpl;
+      if (impl === undefined) return {};
+      return impl();
     }
   };
   return fake as unknown as Session;
@@ -325,5 +332,39 @@ describe('closeAllSessions', () => {
     expect(succeededCloses).toBe(1);
     expect(getSession(id1)).toBeUndefined();
     expect(getSession(id2)).toBeUndefined();
+  });
+});
+
+describe('getEffectiveContext', () => {
+  test('returns null when sessionId is empty', async () => {
+    const result = await getEffectiveContext('' as SessionId);
+    expect(result).toBeNull();
+  });
+
+  test('returns null when the session is not in the registry', async () => {
+    const result = await getEffectiveContext('does-not-exist' as SessionId);
+    expect(result).toBeNull();
+  });
+
+  test('delegates to Session.getEffectiveContext for a registered session', async () => {
+    seedProfile();
+    const stub: EffectiveContext = {
+      role: 'ANALYST',
+      warehouse: 'WH_XS',
+      database: 'DEMO',
+      schema: 'PUBLIC'
+    };
+    __setSessionFactoryForTesting(async () =>
+      makeFakeSession({
+        id: 'session-eff',
+        profileId: 'p1',
+        getEffectiveContextImpl: () => stub
+      })
+    );
+
+    const id = await openSession('p1', {});
+    const result = await getEffectiveContext(id);
+
+    expect(result).toEqual(stub);
   });
 });

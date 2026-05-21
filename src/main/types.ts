@@ -205,6 +205,9 @@ export interface SnowboyApi {
   };
   sessionsExt: {
     getEffectiveContext(sessionId: SessionId): Promise<EffectiveContext | null>;
+    onEffectiveContextChanged(
+      handler: (event: { sessionId: SessionId }) => void
+    ): () => void;
   };
   settings: {
     get(): Promise<Settings>;

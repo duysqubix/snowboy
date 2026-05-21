@@ -12,16 +12,20 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const projectRootRaw = resolve(here, '..', '..', '..');
 
 /**
- * WSL→Windows path bridge. When running from WSL bash with the Windows
- * bun/electron binaries, `process.cwd()` returns a `/mnt/c/...` path that
- * Windows Electron's require() resolver cannot understand → playwright-core
- * preload load fails with "Cannot find module '/mnt/c/...'". Translate
- * such paths to native `C:\...` so the spawned Windows Electron can
- * resolve modules correctly. No-op on macOS/Linux/native Windows shells.
+ * WSL→Windows path bridge. Only applies when the LAUNCHER (this Node/Bun
+ * process) is itself a Windows binary running under WSL bash — in that
+ * case `process.cwd()` returns a `/mnt/c/...` path that Windows Electron's
+ * require() resolver cannot understand, so we translate to `C:\...`.
+ *
+ * On Linux launchers (Linux-native Bun under WSL), the `/mnt/c/...` path
+ * is the correct form — translating to `C:\...` would make Linux `chdir`
+ * fail and the spawn would surface as `ENOENT`. So we skip translation
+ * there. WSL Interop handles `.exe` spawn from the Linux side already.
  */
-const projectRoot = projectRootRaw.startsWith('/mnt/')
-  ? projectRootRaw.replace(/^\/mnt\/([a-z])\//, (_m, drive: string) => `${drive.toUpperCase()}:\\`).replace(/\//g, '\\')
-  : projectRootRaw;
+const projectRoot =
+  process.platform === 'win32' && projectRootRaw.startsWith('/mnt/')
+    ? projectRootRaw.replace(/^\/mnt\/([a-z])\//, (_m, drive: string) => `${drive.toUpperCase()}:\\`).replace(/\//g, '\\')
+    : projectRootRaw;
 
 test.describe('snowboy boot smoke', () => {
   test('renderer mounts and shows Snowboy heading', async () => {
