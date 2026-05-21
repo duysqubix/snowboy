@@ -208,7 +208,8 @@ export interface SnowboyApi {
   };
   settings: {
     get(): Promise<Settings>;
-    set(partial: Partial<Settings>): Promise<void>;
+    set(partial: Partial<Settings>): Promise<Settings>;
+    onChanged(handler: (event: Settings) => void): () => void;
   };
   theme: {
     get(): Promise<EffectiveTheme>;

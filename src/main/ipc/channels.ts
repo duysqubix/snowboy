@@ -49,7 +49,11 @@ export const CHANNELS = {
   },
   settings: {
     get: 'settings.get',
-    set: 'settings.set'
+    set: 'settings.set',
+    boot: 'settings.boot'
+  },
+  settingsEvents: {
+    changed: 'settings.changed'
   },
   theme: {
     get: 'theme.get'

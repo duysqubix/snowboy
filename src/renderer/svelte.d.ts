@@ -1,4 +1,4 @@
-import type { SnowboyApi } from '../main/types';
+import type { Settings, SnowboyApi } from '../main/types';
 
 declare module '*.svelte' {
   import type { Component } from 'svelte';
@@ -11,6 +11,7 @@ declare module '*.css';
 declare global {
   interface Window {
     snowboy: SnowboyApi;
+    snowboySettingsBoot: Settings;
   }
 }
 

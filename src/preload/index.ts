@@ -25,6 +25,72 @@ import type {
   Worksheet
 } from '../main/types';
 
+/**
+ * Synchronous settings boot. The renderer's theme decision (T4.4a)
+ * must run before first paint to avoid FOUC, so we cannot wait for
+ * an `invoke()` round-trip during renderer hydration. `sendSync`
+ * blocks the preload thread until the main process responds; the
+ * main `settings.boot` handler is registered before any
+ * `BrowserWindow.loadURL` fires, so the round-trip is bounded by a
+ * single sync handler call (a few ms) and only happens once per
+ * preload script execution.
+ */
+function readSettingsBoot(): Settings {
+  try {
+    const raw: unknown = ipcRenderer.sendSync(CHANNELS.settings.boot);
+    if (raw && typeof raw === 'object') {
+      return raw as Settings;
+    }
+    console.warn(
+      '[preload] settings.boot returned non-object payload; using fallback'
+    );
+  } catch (err) {
+    console.warn(
+      `[preload] settings.boot sendSync failed: ${(err as Error).message}; using fallback`
+    );
+  }
+  return {
+    theme: 'system',
+    fontSize: 14,
+    tabWidth: 2,
+    wordWrap: true,
+    telemetryEnabled: false,
+    dataDir: ''
+  };
+}
+
+const settingsBoot = readSettingsBoot();
+
+/**
+ * Apply the boot theme to `<html>` BEFORE the renderer paints (T4.4a FOUC
+ * fix). Skipping this lets the page render in default light then flip to
+ * dark after Svelte hydration — a visible white flash on dark systems.
+ *
+ * Effective theme = settings.theme when explicit (`light`/`dark`), else a
+ * sync `theme.boot` IPC that reads `nativeTheme.shouldUseDarkColors`. The
+ * preload shares the DOM with the renderer even under `contextIsolation:
+ * true`, so writing `classList` here is safe and observed by Tailwind's
+ * `dark:` variant from the very first paint.
+ */
+(function applyBootTheme() {
+  try {
+    const mode = settingsBoot.theme;
+    let effective: EffectiveTheme;
+    if (mode === 'system') {
+      const raw: unknown = ipcRenderer.sendSync('theme.boot');
+      effective = raw === 'dark' ? 'dark' : 'light';
+    } else {
+      effective = mode;
+    }
+    document.documentElement.classList.toggle('dark', effective === 'dark');
+  } catch (err) {
+    console.warn(
+      `[preload] boot theme apply failed: ${(err as Error).message}; defaulting to light`
+    );
+    document.documentElement.classList.remove('dark');
+  }
+})();
+
 function makeEventBridge<T>(channel: string) {
   return (handler: (event: T) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, payload: T): void => {
@@ -108,8 +174,9 @@ const api = {
   },
   settings: {
     get: (): Promise<Settings> => ipcRenderer.invoke(CHANNELS.settings.get),
-    set: (partial: Partial<Settings>): Promise<void> =>
-      ipcRenderer.invoke(CHANNELS.settings.set, partial)
+    set: (partial: Partial<Settings>): Promise<Settings> =>
+      ipcRenderer.invoke(CHANNELS.settings.set, partial),
+    onChanged: makeEventBridge<Settings>(CHANNELS.settingsEvents.changed)
   },
   theme: {
     get: (): Promise<EffectiveTheme> => ipcRenderer.invoke(CHANNELS.theme.get),
@@ -140,3 +207,4 @@ const api = {
 } satisfies SnowboyApi;
 
 contextBridge.exposeInMainWorld('snowboy', api);
+contextBridge.exposeInMainWorld('snowboySettingsBoot', settingsBoot);
