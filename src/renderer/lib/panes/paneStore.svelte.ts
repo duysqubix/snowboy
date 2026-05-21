@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import type { QueryId } from '../../../main/types';
 
@@ -30,12 +31,14 @@ export class PaneStateFacade {
 const registry = new SvelteMap<string, PaneStateFacade>();
 
 export function getOrCreatePaneState(paneId: string, worksheetId: string): PaneStateFacade {
-  let state = registry.get(paneId);
-  if (state === undefined) {
-    state = new PaneStateFacade(worksheetId);
-    registry.set(paneId, state);
-  }
-  return state;
+  return untrack(() => {
+    let state = registry.get(paneId);
+    if (state === undefined) {
+      state = new PaneStateFacade(worksheetId);
+      registry.set(paneId, state);
+    }
+    return state;
+  });
 }
 
 export function getPaneState(paneId: string): PaneStateFacade | null {

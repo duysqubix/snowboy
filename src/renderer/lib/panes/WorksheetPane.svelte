@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onDestroy, onMount, untrack } from 'svelte';
+  import { getContext, onDestroy, onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { getOrCreatePaneState } from './paneStore.svelte';
   import { panes as panesSingleton, type PaneTreeStore } from '../stores/panes.svelte';
@@ -17,7 +17,7 @@
 
   let { paneId, worksheetId }: { paneId: string; worksheetId: string } = $props();
 
-  const paneState = untrack(() => getOrCreatePaneState(paneId, worksheetId));
+  const paneState = $derived(getOrCreatePaneState(paneId, worksheetId));
 
   const SAVE_DEBOUNCE_MS = 500;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;

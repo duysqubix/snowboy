@@ -20,6 +20,17 @@
     const sizes = detail.map((d) => d.size);
     store.setSizes(store.splitNodeId(tree), sizes);
   }
+
+  function nodeKey(node: LayoutTree): string {
+    if (node.kind === 'leaf') return node.paneId;
+    return `split:${firstLeafId(node)}`;
+  }
+
+  function firstLeafId(node: LayoutTree): string {
+    if (node.kind === 'leaf') return node.paneId;
+    const first = node.children[0];
+    return first ? firstLeafId(first) : 'empty';
+  }
 </script>
 
 {#if tree.kind === 'leaf'}
@@ -29,7 +40,7 @@
     horizontal={tree.direction === 'h'}
     on:resized={(e: CustomEvent<PaneSizingEvent[]>) => handleResized(e.detail)}
   >
-    {#each tree.children as child, i (i)}
+    {#each tree.children as child, i (nodeKey(child))}
       <Pane size={tree.sizes[i]}>
         <PaneTree tree={child} />
       </Pane>
