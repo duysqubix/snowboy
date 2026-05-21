@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { LayoutTree } from '../../../main/types';
+import type { LayoutTree, LayoutTreeSerialized } from '../../../main/types';
 import { getPaneState } from '../panes/paneStore.svelte';
 
 export function createPaneTree() {
@@ -11,6 +11,10 @@ export function createPaneTree() {
     worksheetId: initialWorksheetId
   });
   let activePaneId = $state<string>(initialPaneId);
+  let version = $state<number>(0);
+  const bump = (): void => {
+    version = version + 1;
+  };
 
   function findLeaf(
     node: LayoutTree,
@@ -75,6 +79,7 @@ export function createPaneTree() {
       }
     }
     activePaneId = newPaneId;
+    bump();
   }
 
   function closeActive() {
@@ -88,6 +93,7 @@ export function createPaneTree() {
       const newWorksheetId = nanoid();
       tree = { kind: 'leaf', paneId: newPaneId, worksheetId: newWorksheetId };
       activePaneId = newPaneId;
+      bump();
       return;
     }
 
@@ -128,6 +134,7 @@ export function createPaneTree() {
     } else {
       activePaneId = '';
     }
+    bump();
   }
 
   function findNodeParent(
@@ -168,6 +175,7 @@ export function createPaneTree() {
     const newWorksheetId = nanoid();
     tree = { kind: 'leaf', paneId: newPaneId, worksheetId: newWorksheetId };
     activePaneId = newPaneId;
+    bump();
   }
 
   function setActivePaneSql(sql: string): boolean {
@@ -179,13 +187,89 @@ export function createPaneTree() {
     return true;
   }
 
+  function findSplitById(
+    node: LayoutTree,
+    id: string
+  ): Extract<LayoutTree, { kind: 'split' }> | null {
+    if (node.kind === 'leaf') return null;
+    if (splitNodeId(node) === id) return node;
+    for (const child of node.children) {
+      const found = findSplitById(child, id);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function splitNodeId(node: Extract<LayoutTree, { kind: 'split' }>): string {
+    const leafIds: string[] = [];
+    const collect = (n: LayoutTree): void => {
+      if (n.kind === 'leaf') {
+        leafIds.push(n.paneId);
+      } else {
+        for (const child of n.children) collect(child);
+      }
+    };
+    collect(node);
+    return `split:${node.direction}:${leafIds.join(',')}`;
+  }
+
+  function setSizes(splitId: string, sizes: number[]): void {
+    const split = findSplitById(tree, splitId);
+    if (split === null) return;
+    if (split.sizes.length !== sizes.length) return;
+    let changed = false;
+    for (let i = 0; i < sizes.length; i++) {
+      const next = sizes[i] ?? 0;
+      if (split.sizes[i] !== next) {
+        split.sizes[i] = next;
+        changed = true;
+      }
+    }
+    if (changed) bump();
+  }
+
+  function serialize(): LayoutTreeSerialized {
+    const snapshot = $state.snapshot(tree) as LayoutTree;
+    return { version: 2, tree: snapshot };
+  }
+
+  function restore(serialized: LayoutTreeSerialized | null | LayoutTree | undefined): void {
+    if (serialized === null || serialized === undefined) return;
+    let next: LayoutTree | null = null;
+    if ('version' in serialized && (serialized.version === 1 || serialized.version === 2)) {
+      next = serialized.tree;
+    } else if ((serialized as LayoutTree).kind === 'leaf' || (serialized as LayoutTree).kind === 'split') {
+      next = serialized as LayoutTree;
+    }
+    if (next === null) return;
+    if (!isValidTree(next)) return;
+    tree = next;
+    const firstLeaf = getFirstLeaf(tree);
+    activePaneId = firstLeaf ? firstLeaf.paneId : '';
+    bump();
+  }
+
+  function isValidTree(node: LayoutTree): boolean {
+    if (node.kind === 'leaf') {
+      return typeof node.paneId === 'string' && typeof node.worksheetId === 'string';
+    }
+    if (!Array.isArray(node.children) || node.children.length === 0) return false;
+    if (!Array.isArray(node.sizes) || node.sizes.length !== node.children.length) return false;
+    return node.children.every((c) => isValidTree(c));
+  }
+
   return {
     get tree() { return tree; },
     get activePaneId() { return activePaneId; },
+    get version() { return version; },
     splitActive,
     closeActive,
     setActive,
     setActivePaneSql,
+    setSizes,
+    splitNodeId,
+    serialize,
+    restore,
     reset
   };
 }

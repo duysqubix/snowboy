@@ -260,8 +260,6 @@ export async function closeAllSessions(): Promise<void> {
 // IPC registration adapter
 // ---------------------------------------------------------------------------
 
-let shutdownInstalled = false;
-
 export function register(ipcMain: IpcMain): void {
   ipcMain.handle(
     CHANNELS.sessions.open,
@@ -280,25 +278,10 @@ export function register(ipcMain: IpcMain): void {
     notImplemented('sessions.getEffectiveContext', 'B3')
   );
 
-  // Dynamic import so unit tests (which run outside Electron via bun) never
-  // trigger named-export resolution on the CommonJS electron module. The
-  // hook is fire-and-forget; failure to install it just means sessions
-  // leak on shutdown, which Snowflake recovers from via idle timeout.
-  if (!shutdownInstalled) {
-    shutdownInstalled = true;
-    void installShutdownHook();
-  }
-}
-
-async function installShutdownHook(): Promise<void> {
-  try {
-    const electron = await import('electron');
-    electron.app.on('before-quit', () => {
-      void closeAllSessions();
-    });
-  } catch (err) {
-    console.warn('[sessions] could not install before-quit hook:', err);
-  }
+  // The before-quit shutdown is owned by src/main/index.ts as part of the
+  // T4.1 orchestrated flush protocol: requestFlush → wait for renderer ack
+  // → closeAllSessions → closeDatabase → app.quit(). No per-module
+  // before-quit hook here; it would race the orchestrator's preventDefault.
 }
 
 export type { DriverSessionId };

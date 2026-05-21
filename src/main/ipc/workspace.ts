@@ -17,14 +17,20 @@
 
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
-import { notImplemented } from './errors';
+import { getDatabase } from '../storage/db';
+import { getLayout as storageGetLayout, setLayout as storageSetLayout } from '../storage/layout';
 import {
   getWorksheet as storageGetWorksheet,
   listWorksheets as storageListWorksheets,
   upsertWorksheet as storageUpsertWorksheet,
   type WorksheetRow
 } from '../storage/worksheets';
-import type { SessionContext, Worksheet } from '../types';
+import type {
+  LayoutTree,
+  LayoutTreeSerialized,
+  SessionContext,
+  Worksheet
+} from '../types';
 
 function rowToWorksheet(row: WorksheetRow): Worksheet {
   const w: Worksheet = {
@@ -83,15 +89,77 @@ export function listWorksheets(): Worksheet[] {
   return storageListWorksheets().map(rowToWorksheet);
 }
 
+function unwrapLayout(raw: unknown): LayoutTree | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object') {
+    console.warn('[workspace] loadLayout: non-object payload, dropping');
+    return null;
+  }
+  const obj = raw as { version?: unknown; tree?: unknown; kind?: unknown };
+  if (obj.version === 2 && obj.tree && typeof obj.tree === 'object') {
+    return obj.tree as LayoutTree;
+  }
+  if (obj.version === 1 && obj.tree && typeof obj.tree === 'object') {
+    return obj.tree as LayoutTree;
+  }
+  if (obj.kind === 'leaf' || obj.kind === 'split') {
+    return obj as LayoutTree;
+  }
+  console.warn('[workspace] loadLayout: unrecognized envelope, dropping');
+  return null;
+}
+
+export function saveLayout(layout: LayoutTree): void {
+  const envelope: LayoutTreeSerialized = { version: 2, tree: layout };
+  storageSetLayout(envelope);
+}
+
+export function loadLayout(): LayoutTree | null {
+  return unwrapLayout(storageGetLayout());
+}
+
+export function saveWorkspace(payload: {
+  layout: LayoutTreeSerialized;
+  worksheets: Worksheet[];
+}): void {
+  if (
+    payload === null ||
+    typeof payload !== 'object' ||
+    payload.layout === null ||
+    typeof payload.layout !== 'object'
+  ) {
+    throw new Error('saveWorkspace: payload.layout is required');
+  }
+  if (!Array.isArray(payload.worksheets)) {
+    throw new Error('saveWorkspace: payload.worksheets must be an array');
+  }
+  const db = getDatabase();
+  const tx = db.transaction(() => {
+    storageSetLayout(payload.layout);
+    for (const w of payload.worksheets) {
+      storageUpsertWorksheet({
+        id: w.id,
+        title: w.title,
+        body: w.body,
+        cursor_line: w.cursorLine ?? null,
+        cursor_col: w.cursorCol ?? null,
+        scroll_top: w.scrollTop ?? null,
+        last_session_context: w.lastSessionContext ?? null
+      });
+    }
+  });
+  tx();
+}
+
 export function register(ipcMain: IpcMain): void {
-  ipcMain.handle(CHANNELS.workspace.saveLayout, () =>
-    notImplemented('workspace.saveLayout', 'T4.1')
+  ipcMain.handle(CHANNELS.workspace.saveLayout, (_event, layout: LayoutTree) =>
+    saveLayout(layout)
   );
-  ipcMain.handle(CHANNELS.workspace.loadLayout, () =>
-    notImplemented('workspace.loadLayout', 'T4.1')
-  );
-  ipcMain.handle(CHANNELS.workspace.saveWorkspace, () =>
-    notImplemented('workspace.saveWorkspace', 'T4.1')
+  ipcMain.handle(CHANNELS.workspace.loadLayout, () => loadLayout());
+  ipcMain.handle(
+    CHANNELS.workspace.saveWorkspace,
+    (_event, payload: { layout: LayoutTreeSerialized; worksheets: Worksheet[] }) =>
+      saveWorkspace(payload)
   );
 
   ipcMain.handle(CHANNELS.workspace.saveWorksheet, (_event, w: Worksheet) =>
@@ -101,4 +169,23 @@ export function register(ipcMain: IpcMain): void {
     getWorksheet(id)
   );
   ipcMain.handle(CHANNELS.workspace.listWorksheets, () => listWorksheets());
+
+  ipcMain.handle(CHANNELS.workspace.flushAck, () => {
+    flushAckResolver?.();
+    flushAckResolver = null;
+  });
+}
+
+let flushAckResolver: (() => void) | null = null;
+
+export function waitForRendererFlush(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    flushAckResolver = resolve;
+    setTimeout(() => {
+      if (flushAckResolver !== null) {
+        flushAckResolver = null;
+        resolve();
+      }
+    }, timeoutMs);
+  });
 }

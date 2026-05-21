@@ -1,7 +1,10 @@
 import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CHANNELS } from './ipc/channels';
 import { registerIpc } from './ipc/index';
+import { closeAllSessions } from './ipc/sessions';
+import { waitForRendererFlush } from './ipc/workspace';
 import { closeDatabase, openDatabase } from './storage/db';
 import { EMBEDDED_MIGRATIONS } from './storage/embedded-migrations';
 
@@ -102,8 +105,30 @@ void app.whenReady().then(async () => {
   });
 });
 
-app.on('before-quit', () => {
-  closeDatabase();
+let shutdownComplete = false;
+
+app.on('before-quit', (event) => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  void (async () => {
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send(CHANNELS.workspaceEvents.requestFlush);
+        } catch (err) {
+          console.warn('[main] before-quit: requestFlush send failed', err);
+        }
+      }
+      await waitForRendererFlush(2000);
+      await closeAllSessions();
+    } catch (err) {
+      console.warn('[main] before-quit: orchestrated shutdown error', err);
+    } finally {
+      closeDatabase();
+      shutdownComplete = true;
+      app.quit();
+    }
+  })();
 });
 
 app.on('window-all-closed', () => {

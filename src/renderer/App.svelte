@@ -17,6 +17,15 @@
   import { installKeymap } from '$lib/utils/keymap';
   import { profiles } from '$lib/stores/profiles.svelte';
   import { sessions } from '$lib/stores/sessions.svelte';
+  import { snowboy } from '$lib/ipc/client';
+  import { debounce } from '$lib/utils/debounce';
+
+  let layoutRestored = $state(false);
+
+  const saveLayoutDebounced = debounce(() => {
+    if (!layoutRestored) return;
+    void snowboy.workspace.saveLayout(panesSingleton.serialize().tree);
+  }, 500);
 
   setContext<() => PaneTreeStore>('panes-store', () => tabs.active?.paneTree ?? panesSingleton);
 
@@ -76,6 +85,23 @@
 
     cleanups.push(installTabsKeymap(tabs));
 
+    void (async () => {
+      try {
+        const saved = await snowboy.workspace.loadLayout();
+        if (saved !== null) panesSingleton.restore(saved);
+      } catch (err) {
+        console.warn('[app] loadLayout failed; using default layout', err);
+      } finally {
+        layoutRestored = true;
+      }
+    })();
+
+    const offFlushReq = snowboy.workspaceEvents.onRequestFlush(() => {
+      saveLayoutDebounced.flush();
+      void snowboy.workspace.flushAck();
+    });
+    cleanups.push(offFlushReq);
+
     function handleHistoryToggle(e: KeyboardEvent) {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
@@ -99,6 +125,11 @@
     lastKeymapTabId = id;
     if (paneKeymapCleanup) paneKeymapCleanup();
     paneKeymapCleanup = installKeymap(tabs.active?.paneTree ?? panesSingleton);
+  });
+
+  $effect(() => {
+    void panesSingleton.version;
+    saveLayoutDebounced();
   });
 
   let activeTree = $derived(tabs.active?.paneTree.tree ?? panesSingleton.tree);

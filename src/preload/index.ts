@@ -72,24 +72,34 @@ const settingsBoot = readSettingsBoot();
  * true`, so writing `classList` here is safe and observed by Tailwind's
  * `dark:` variant from the very first paint.
  */
-(function applyBootTheme() {
+const bootEffectiveTheme: EffectiveTheme = (() => {
   try {
     const mode = settingsBoot.theme;
-    let effective: EffectiveTheme;
-    if (mode === 'system') {
-      const raw: unknown = ipcRenderer.sendSync('theme.boot');
-      effective = raw === 'dark' ? 'dark' : 'light';
-    } else {
-      effective = mode;
-    }
-    document.documentElement.classList.toggle('dark', effective === 'dark');
+    if (mode === 'light' || mode === 'dark') return mode;
+    const raw: unknown = ipcRenderer.sendSync('theme.boot');
+    return raw === 'dark' ? 'dark' : 'light';
   } catch (err) {
     console.warn(
-      `[preload] boot theme apply failed: ${(err as Error).message}; defaulting to light`
+      `[preload] boot theme resolve failed: ${(err as Error).message}; defaulting to light`
     );
-    document.documentElement.classList.remove('dark');
+    return 'light';
   }
 })();
+
+function applyBootTheme(): void {
+  const root = document.documentElement;
+  if (root === null) {
+    console.warn('[preload] applyBootTheme: documentElement is null at apply time');
+    return;
+  }
+  root.classList.toggle('dark', bootEffectiveTheme === 'dark');
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', applyBootTheme, { once: true });
+} else {
+  applyBootTheme();
+}
 
 function makeEventBridge<T>(channel: string) {
   return (handler: (event: T) => void): (() => void) => {
@@ -202,7 +212,19 @@ const api = {
       worksheets: Worksheet[];
     }): Promise<void> => ipcRenderer.invoke(CHANNELS.workspace.saveWorkspace, payload),
     getWorksheet: (id: string): Promise<Worksheet | null> =>
-      ipcRenderer.invoke(CHANNELS.workspace.getWorksheet, id)
+      ipcRenderer.invoke(CHANNELS.workspace.getWorksheet, id),
+    flushAck: (): Promise<void> => ipcRenderer.invoke(CHANNELS.workspace.flushAck)
+  },
+  workspaceEvents: {
+    onRequestFlush: (handler: () => void): (() => void) => {
+      const listener = (): void => {
+        handler();
+      };
+      ipcRenderer.on(CHANNELS.workspaceEvents.requestFlush, listener);
+      return () => {
+        ipcRenderer.off(CHANNELS.workspaceEvents.requestFlush, listener);
+      };
+    }
   }
 } satisfies SnowboyApi;
 

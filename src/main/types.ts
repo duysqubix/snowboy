@@ -221,10 +221,14 @@ export interface SnowboyApi {
   };
   workspace: {
     saveLayout(layout: LayoutTree): Promise<void>;
-    loadLayout(): Promise<LayoutTree>;
+    loadLayout(): Promise<LayoutTree | null>;
     saveWorksheet(w: Worksheet): Promise<void>;
     listWorksheets(): Promise<Worksheet[]>;
     saveWorkspace(payload: { layout: LayoutTreeSerialized; worksheets: Worksheet[] }): Promise<void>;
     getWorksheet(id: string): Promise<Worksheet | null>;
+    flushAck(): Promise<void>;
+  };
+  workspaceEvents: {
+    onRequestFlush(handler: () => void): () => void;
   };
 }

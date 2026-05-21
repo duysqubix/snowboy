@@ -45,7 +45,11 @@ export const CHANNELS = {
     saveWorksheet: 'workspace.save-worksheet',
     listWorksheets: 'workspace.list-worksheets',
     saveWorkspace: 'workspace.save-workspace',
-    getWorksheet: 'workspace.get-worksheet'
+    getWorksheet: 'workspace.get-worksheet',
+    flushAck: 'workspace.flush-ack'
+  },
+  workspaceEvents: {
+    requestFlush: 'workspace.request-flush'
   },
   settings: {
     get: 'settings.get',
