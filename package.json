@@ -19,7 +19,7 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && svelte-check --tsconfig tsconfig.renderer.json",
-    "test": "bun test ./tests/unit/ --pass-with-no-tests",
+    "test": "bun test ./tests/unit/ --preload ./tests/unit/setup.ts --pass-with-no-tests",
     "test:e2e": "electron-vite build && playwright test -c tests/e2e/playwright.config.ts",
     "format": "prettier --write .",
     "rebuild": "bun run scripts/rebuild-natives.ts",

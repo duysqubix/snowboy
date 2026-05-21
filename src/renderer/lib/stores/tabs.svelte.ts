@@ -8,6 +8,7 @@
  */
 import { nanoid } from 'nanoid';
 import { createPaneTree, type PaneTreeStore } from './panes.svelte';
+import { registerShortcut } from '../utils/keymap';
 
 export interface Tab {
   id: string;
@@ -108,41 +109,53 @@ export const tabs = createTabsStore();
  * (next / prev), and cmd/ctrl-1..9 (switch to tab N).
  */
 export function installTabsKeymap(store: TabsStore = tabs): () => void {
-  function handleKeyDown(e: KeyboardEvent) {
-    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
-    if (!cmdOrCtrl) return;
+  const cleanups = [
+    registerShortcut({
+      id: 'tab.new',
+      combo: { cmdOrCtrl: true, code: 'KeyT' },
+      scope: 'global-block-editor',
+      description: 'New tab',
+      handler: (e) => {
+        e.preventDefault();
+        store.add();
+      }
+    }),
+    registerShortcut({
+      id: 'tab.next',
+      combo: { cmdOrCtrl: true, shift: true, code: 'BracketRight' },
+      scope: 'global-block-editor',
+      description: 'Next tab',
+      handler: (e) => {
+        e.preventDefault();
+        store.next();
+      }
+    }),
+    registerShortcut({
+      id: 'tab.prev',
+      combo: { cmdOrCtrl: true, shift: true, code: 'BracketLeft' },
+      scope: 'global-block-editor',
+      description: 'Previous tab',
+      handler: (e) => {
+        e.preventDefault();
+        store.prev();
+      }
+    })
+  ];
 
-    // Skip when focus is inside an editable field so typing isn't hijacked.
-    const target = e.target as HTMLElement | null;
-    const inEditable =
-      !!target &&
-      (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable ||
-        target.closest('.cm-editor') != null);
-
-    if (e.key.toLowerCase() === 't' && !inEditable) {
-      e.preventDefault();
-      store.add();
-      return;
-    }
-    if (e.shiftKey && e.key === ']') {
-      e.preventDefault();
-      store.next();
-      return;
-    }
-    if (e.shiftKey && e.key === '[') {
-      e.preventDefault();
-      store.prev();
-      return;
-    }
-    if (!e.shiftKey && /^[1-9]$/.test(e.key)) {
-      e.preventDefault();
-      store.switchTo(parseInt(e.key, 10) - 1);
-    }
+  for (let i = 1; i <= 9; i++) {
+    cleanups.push(
+      registerShortcut({
+        id: `tab.switch-${i}`,
+        combo: { cmdOrCtrl: true, code: `Digit${i}` },
+        scope: 'global-block-editor',
+        description: `Switch to tab ${i}`,
+        handler: (e) => {
+          e.preventDefault();
+          store.switchTo(i - 1);
+        }
+      })
+    );
   }
 
-  window.addEventListener('keydown', handleKeyDown);
-  return () => window.removeEventListener('keydown', handleKeyDown);
+  return () => cleanups.forEach((c) => c());
 }
