@@ -9,7 +9,19 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
-const projectRoot = resolve(here, '..', '..', '..');
+const projectRootRaw = resolve(here, '..', '..', '..');
+
+/**
+ * WSL→Windows path bridge. When running from WSL bash with the Windows
+ * bun/electron binaries, `process.cwd()` returns a `/mnt/c/...` path that
+ * Windows Electron's require() resolver cannot understand → playwright-core
+ * preload load fails with "Cannot find module '/mnt/c/...'". Translate
+ * such paths to native `C:\...` so the spawned Windows Electron can
+ * resolve modules correctly. No-op on macOS/Linux/native Windows shells.
+ */
+const projectRoot = projectRootRaw.startsWith('/mnt/')
+  ? projectRootRaw.replace(/^\/mnt\/([a-z])\//, (_m, drive: string) => `${drive.toUpperCase()}:\\`).replace(/\//g, '\\')
+  : projectRootRaw;
 
 test.describe('snowboy boot smoke', () => {
   test('renderer mounts and shows Snowboy heading', async () => {
