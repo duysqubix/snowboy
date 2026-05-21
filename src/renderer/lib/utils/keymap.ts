@@ -120,7 +120,7 @@ export function installKeymap(paneStore: PaneTreeStore = panesSingleton): () => 
   const cleanups = [
     registerShortcut({
       id: 'pane.split-vertical',
-      combo: { cmdOrCtrl: true, code: 'Backslash' },
+      combo: { cmdOrCtrl: true, alt: true, code: 'Backslash' },
       scope: 'global-allow-editor',
       description: 'Split pane vertically',
       handler: (e) => {
@@ -130,7 +130,7 @@ export function installKeymap(paneStore: PaneTreeStore = panesSingleton): () => 
     }),
     registerShortcut({
       id: 'pane.split-horizontal',
-      combo: { cmdOrCtrl: true, shift: true, code: 'Backslash' },
+      combo: { cmdOrCtrl: true, alt: true, shift: true, code: 'Backslash' },
       scope: 'global-allow-editor',
       description: 'Split pane horizontally',
       handler: (e) => {

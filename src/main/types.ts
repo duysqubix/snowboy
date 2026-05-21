@@ -199,6 +199,8 @@ export interface SnowboyApi {
     listDatabases(sessionId: SessionId): Promise<string[]>;
     listSchemas(sessionId: SessionId, db: string): Promise<string[]>;
     listObjects(sessionId: SessionId, db: string, schema: string): Promise<SchemaObject[]>;
+    listRoles(sessionId: SessionId): Promise<string[]>;
+    listWarehouses(sessionId: SessionId): Promise<string[]>;
     getColumns(sessionId: SessionId, obj: ObjectRef): Promise<Column[]>;
     getDDL(sessionId: SessionId, obj: ObjectRef): Promise<string>;
     invalidate(profileId: string, database?: string, schema?: string): Promise<void>;

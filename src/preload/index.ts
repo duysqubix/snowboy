@@ -175,6 +175,10 @@ const api = {
       ipcRenderer.invoke(CHANNELS.schema.getColumns, sessionId, obj),
     getDDL: (sessionId: SessionId, obj: ObjectRef): Promise<string> =>
       ipcRenderer.invoke(CHANNELS.schema.getDDL, sessionId, obj),
+    listRoles: (sessionId: SessionId): Promise<string[]> =>
+      ipcRenderer.invoke(CHANNELS.schema.listRoles, sessionId),
+    listWarehouses: (sessionId: SessionId): Promise<string[]> =>
+      ipcRenderer.invoke(CHANNELS.schema.listWarehouses, sessionId),
     invalidate: (profileId: string, database?: string, schema?: string): Promise<void> =>
       ipcRenderer.invoke(CHANNELS.schema.invalidate, profileId, database, schema)
   },

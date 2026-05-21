@@ -258,6 +258,103 @@
     }
   }
 
+  let availableRoles = $state<string[]>([]);
+  let availableWarehouses = $state<string[]>([]);
+  let availableDatabases = $state<string[]>([]);
+  let availableSchemas = $state<string[]>([]);
+  let lastFetchedSessionId: string | null = null;
+  let lastFetchedDatabaseForSchemas: string | null = null;
+
+  $effect(() => {
+    const sid = sessions.activeSessionId;
+    if (sid === null) {
+      availableRoles = [];
+      availableWarehouses = [];
+      availableDatabases = [];
+      availableSchemas = [];
+      lastFetchedSessionId = null;
+      lastFetchedDatabaseForSchemas = null;
+      return;
+    }
+    if (sid === lastFetchedSessionId) return;
+    lastFetchedSessionId = sid;
+    void (async () => {
+      try {
+        const [roles, warehouses, databases] = await Promise.all([
+          snowboy.schema.listRoles(sid),
+          snowboy.schema.listWarehouses(sid),
+          snowboy.schema.listDatabases(sid)
+        ]);
+        if (sessions.activeSessionId !== sid) return;
+        availableRoles = roles;
+        availableWarehouses = warehouses;
+        availableDatabases = databases;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[WorksheetPane] context-list fetch failed: ${message}`);
+      }
+    })();
+  });
+
+  $effect(() => {
+    const sid = sessions.activeSessionId;
+    const db = paneState.database;
+    if (sid === null || !db) {
+      availableSchemas = [];
+      lastFetchedDatabaseForSchemas = null;
+      return;
+    }
+    const key = `${sid}|${db}`;
+    if (key === lastFetchedDatabaseForSchemas) return;
+    lastFetchedDatabaseForSchemas = key;
+    void (async () => {
+      try {
+        const list = await snowboy.schema.listSchemas(sid, db);
+        if (sessions.activeSessionId !== sid || paneState.database !== db) return;
+        availableSchemas = list;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[WorksheetPane] listSchemas failed: ${message}`);
+      }
+    })();
+  });
+
+  async function applyContext(patch: { role?: string; warehouse?: string; database?: string; schema?: string }): Promise<void> {
+    const sid = sessions.activeSessionId;
+    if (sid === null) return;
+    try {
+      await snowboy.sessions.setContext(sid, patch);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Context switch failed: ${message}`);
+    }
+  }
+
+  function handleRoleChange(value: string): void {
+    if (!value || value === paneState.role) return;
+    paneState.role = value;
+    void applyContext({ role: value });
+  }
+
+  function handleWarehouseChange(value: string): void {
+    if (!value || value === paneState.warehouse) return;
+    paneState.warehouse = value;
+    void applyContext({ warehouse: value });
+  }
+
+  function handleDatabaseChange(value: string): void {
+    if (!value || value === paneState.database) return;
+    paneState.database = value;
+    paneState.schema = undefined;
+    void applyContext({ database: value });
+  }
+
+  function handleSchemaChange(value: string): void {
+    if (!value || value === paneState.schema) return;
+    paneState.schema = value;
+    void applyContext({ schema: value });
+  }
+
   function formatDuration(ms: number | null): string {
     if (ms === null) return '—';
     if (ms < 1000) return `${ms}ms`;
@@ -285,40 +382,75 @@
 >
   <div class="flex items-center justify-between px-2 h-10 border-b border-border shrink-0">
     <div class="flex items-center gap-2">
-      <Select.Root type="single" bind:value={paneState.role as string}>
-        <Select.Trigger class="h-7 w-[120px] text-xs">
+      <Select.Root
+        type="single"
+        value={paneState.role ?? ''}
+        onValueChange={(v) => v && handleRoleChange(v)}
+      >
+        <Select.Trigger class="h-7 w-[140px] text-xs">
           {paneState.role || 'Role'}
         </Select.Trigger>
         <Select.Content>
-          <Select.Item value="ACCOUNTADMIN">ACCOUNTADMIN</Select.Item>
-          <Select.Item value="SYSADMIN">SYSADMIN</Select.Item>
+          {#each availableRoles as roleName (roleName)}
+            <Select.Item value={roleName}>{roleName}</Select.Item>
+          {/each}
+          {#if availableRoles.length === 0 && paneState.role}
+            <Select.Item value={paneState.role}>{paneState.role}</Select.Item>
+          {/if}
         </Select.Content>
       </Select.Root>
 
-      <Select.Root type="single" bind:value={paneState.warehouse as string}>
-        <Select.Trigger class="h-7 w-[120px] text-xs">
+      <Select.Root
+        type="single"
+        value={paneState.warehouse ?? ''}
+        onValueChange={(v) => v && handleWarehouseChange(v)}
+      >
+        <Select.Trigger class="h-7 w-[140px] text-xs">
           {paneState.warehouse || 'Warehouse'}
         </Select.Trigger>
         <Select.Content>
-          <Select.Item value="COMPUTE_WH">COMPUTE_WH</Select.Item>
+          {#each availableWarehouses as whName (whName)}
+            <Select.Item value={whName}>{whName}</Select.Item>
+          {/each}
+          {#if availableWarehouses.length === 0 && paneState.warehouse}
+            <Select.Item value={paneState.warehouse}>{paneState.warehouse}</Select.Item>
+          {/if}
         </Select.Content>
       </Select.Root>
 
-      <Select.Root type="single" bind:value={paneState.database as string}>
-        <Select.Trigger class="h-7 w-[120px] text-xs">
+      <Select.Root
+        type="single"
+        value={paneState.database ?? ''}
+        onValueChange={(v) => v && handleDatabaseChange(v)}
+      >
+        <Select.Trigger class="h-7 w-[140px] text-xs">
           {paneState.database || 'Database'}
         </Select.Trigger>
         <Select.Content>
-          <Select.Item value="SNOWFLAKE">SNOWFLAKE</Select.Item>
+          {#each availableDatabases as dbName (dbName)}
+            <Select.Item value={dbName}>{dbName}</Select.Item>
+          {/each}
+          {#if availableDatabases.length === 0 && paneState.database}
+            <Select.Item value={paneState.database}>{paneState.database}</Select.Item>
+          {/if}
         </Select.Content>
       </Select.Root>
 
-      <Select.Root type="single" bind:value={paneState.schema as string}>
-        <Select.Trigger class="h-7 w-[120px] text-xs">
+      <Select.Root
+        type="single"
+        value={paneState.schema ?? ''}
+        onValueChange={(v) => v && handleSchemaChange(v)}
+      >
+        <Select.Trigger class="h-7 w-[140px] text-xs">
           {paneState.schema || 'Schema'}
         </Select.Trigger>
         <Select.Content>
-          <Select.Item value="PUBLIC">PUBLIC</Select.Item>
+          {#each availableSchemas as schemaName (schemaName)}
+            <Select.Item value={schemaName}>{schemaName}</Select.Item>
+          {/each}
+          {#if availableSchemas.length === 0 && paneState.schema}
+            <Select.Item value={paneState.schema}>{paneState.schema}</Select.Item>
+          {/if}
         </Select.Content>
       </Select.Root>
     </div>

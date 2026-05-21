@@ -31,6 +31,8 @@ export const CHANNELS = {
     listDatabases: 'schema.list-databases',
     listSchemas: 'schema.list-schemas',
     listObjects: 'schema.list-objects',
+    listRoles: 'schema.list-roles',
+    listWarehouses: 'schema.list-warehouses',
     getColumns: 'schema.get-columns',
     getDDL: 'schema.get-ddl',
     invalidate: 'schema.invalidate'

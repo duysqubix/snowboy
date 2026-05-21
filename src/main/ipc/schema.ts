@@ -198,6 +198,22 @@ async function fetchSchemaNames(session: Session, database: string): Promise<str
     .filter((name) => name !== 'INFORMATION_SCHEMA');
 }
 
+async function fetchRoleNames(session: Session): Promise<string[]> {
+  const { rows, columns } = await runQueryRows(session, 'SHOW ROLES');
+  const nameIdx = requireColumnIndex(columns, 'name', 'schema.listRoles');
+  return rows
+    .map((row) => row[nameIdx])
+    .filter((v): v is string => typeof v === 'string');
+}
+
+async function fetchWarehouseNames(session: Session): Promise<string[]> {
+  const { rows, columns } = await runQueryRows(session, 'SHOW WAREHOUSES');
+  const nameIdx = requireColumnIndex(columns, 'name', 'schema.listWarehouses');
+  return rows
+    .map((row) => row[nameIdx])
+    .filter((v): v is string => typeof v === 'string');
+}
+
 async function fetchObjectsOfKind(
   session: Session,
   database: string,
@@ -401,6 +417,16 @@ export async function getDDL(
   return fetchDDL(session, obj);
 }
 
+export async function listRoles(sessionId: SessionId): Promise<string[]> {
+  const session = requireSession(sessionId);
+  return fetchRoleNames(session);
+}
+
+export async function listWarehouses(sessionId: SessionId): Promise<string[]> {
+  const session = requireSession(sessionId);
+  return fetchWarehouseNames(session);
+}
+
 // ---------------------------------------------------------------------------
 // IPC registration adapter
 // ---------------------------------------------------------------------------
@@ -425,6 +451,12 @@ export function register(ipcMain: IpcMain): void {
   ipcMain.handle(
     CHANNELS.schema.getDDL,
     (_event, sessionId: SessionId, obj: ObjectRef) => getDDL(sessionId, obj)
+  );
+  ipcMain.handle(CHANNELS.schema.listRoles, (_event, sessionId: SessionId) =>
+    listRoles(sessionId)
+  );
+  ipcMain.handle(CHANNELS.schema.listWarehouses, (_event, sessionId: SessionId) =>
+    listWarehouses(sessionId)
   );
   ipcMain.handle(
     CHANNELS.schema.invalidate,
