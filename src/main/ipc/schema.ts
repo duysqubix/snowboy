@@ -38,6 +38,7 @@
 
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
+import { notImplemented as notImplementedB1 } from './errors';
 import type { Session } from '../snowflake/session';
 import type { ColumnMeta } from '../snowflake/types';
 import type { Column, ObjectRef, SchemaObject, SessionId } from '../types';
@@ -341,5 +342,8 @@ export function register(ipcMain: IpcMain): void {
   ipcMain.handle(
     CHANNELS.schema.getDDL,
     (_event, sessionId: SessionId, obj: ObjectRef) => getDDL(sessionId, obj)
+  );
+  ipcMain.handle(CHANNELS.schema.invalidate, () =>
+    notImplementedB1('schema.invalidate', 'B1')
   );
 }

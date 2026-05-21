@@ -32,7 +32,8 @@ export const CHANNELS = {
     listSchemas: 'schema.list-schemas',
     listObjects: 'schema.list-objects',
     getColumns: 'schema.get-columns',
-    getDDL: 'schema.get-ddl'
+    getDDL: 'schema.get-ddl',
+    invalidate: 'schema.invalidate'
   },
   history: {
     list: 'history.list',
@@ -42,7 +43,22 @@ export const CHANNELS = {
     saveLayout: 'workspace.save-layout',
     loadLayout: 'workspace.load-layout',
     saveWorksheet: 'workspace.save-worksheet',
-    listWorksheets: 'workspace.list-worksheets'
+    listWorksheets: 'workspace.list-worksheets',
+    saveWorkspace: 'workspace.save-workspace',
+    getWorksheet: 'workspace.get-worksheet'
+  },
+  settings: {
+    get: 'settings.get',
+    set: 'settings.set'
+  },
+  theme: {
+    get: 'theme.get'
+  },
+  themeEvents: {
+    changed: 'theme.changed'
+  },
+  sessionsExt: {
+    getEffectiveContext: 'sessions.get-effective-context'
   }
 } as const;
 

@@ -16,6 +16,7 @@ export interface WorksheetRow {
   body: string;
   cursor_line: number | null;
   cursor_col: number | null;
+  scroll_top: number | null;
   last_session_context_json: string | null;
   created_at: number;
   updated_at: number;
@@ -27,6 +28,7 @@ export interface NewWorksheet {
   body: string;
   cursor_line?: number | null;
   cursor_col?: number | null;
+  scroll_top?: number | null;
   last_session_context_json?: string | null;
   last_session_context?: unknown;
 }
@@ -36,6 +38,7 @@ export interface WorksheetPatch {
   body?: string;
   cursor_line?: number | null;
   cursor_col?: number | null;
+  scroll_top?: number | null;
   last_session_context_json?: string | null;
   last_session_context?: unknown;
 }
@@ -45,6 +48,7 @@ interface WorksheetStmts {
   getById: BetterSqlite3.Statement;
   insert: BetterSqlite3.Statement;
   update: BetterSqlite3.Statement;
+  upsert: BetterSqlite3.Statement;
   remove: BetterSqlite3.Statement;
 }
 
@@ -60,15 +64,27 @@ function stmts(db: Database): WorksheetStmts {
     getById: db.prepare('SELECT * FROM worksheets WHERE id = ?'),
     insert: db.prepare(
       'INSERT INTO worksheets (' +
-        'id, title, body, cursor_line, cursor_col, ' +
+        'id, title, body, cursor_line, cursor_col, scroll_top, ' +
         'last_session_context_json, created_at, updated_at' +
-        ') VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ),
     update: db.prepare(
       'UPDATE worksheets SET ' +
-        'title = ?, body = ?, cursor_line = ?, cursor_col = ?, ' +
+        'title = ?, body = ?, cursor_line = ?, cursor_col = ?, scroll_top = ?, ' +
         'last_session_context_json = ?, updated_at = ? ' +
         'WHERE id = ?'
+    ),
+    upsert: db.prepare(
+      'INSERT INTO worksheets (' +
+        'id, title, body, cursor_line, cursor_col, scroll_top, ' +
+        'last_session_context_json, created_at, updated_at' +
+        ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(id) DO UPDATE SET ' +
+        'title = excluded.title, body = excluded.body, ' +
+        'cursor_line = excluded.cursor_line, cursor_col = excluded.cursor_col, ' +
+        'scroll_top = excluded.scroll_top, ' +
+        'last_session_context_json = excluded.last_session_context_json, ' +
+        'updated_at = excluded.updated_at'
     ),
     remove: db.prepare('DELETE FROM worksheets WHERE id = ?')
   };
@@ -109,6 +125,7 @@ export function insertWorksheet(input: NewWorksheet): WorksheetRow {
     body: input.body,
     cursor_line: input.cursor_line ?? null,
     cursor_col: input.cursor_col ?? null,
+    scroll_top: input.scroll_top ?? null,
     last_session_context_json: resolveContextJson(
       input.last_session_context_json,
       input.last_session_context
@@ -122,6 +139,7 @@ export function insertWorksheet(input: NewWorksheet): WorksheetRow {
     row.body,
     row.cursor_line,
     row.cursor_col,
+    row.scroll_top,
     row.last_session_context_json,
     row.created_at,
     row.updated_at
@@ -144,6 +162,7 @@ export function updateWorksheet(id: string, patch: WorksheetPatch): WorksheetRow
     body: patch.body !== undefined ? patch.body : current.body,
     cursor_line: patch.cursor_line !== undefined ? patch.cursor_line : current.cursor_line,
     cursor_col: patch.cursor_col !== undefined ? patch.cursor_col : current.cursor_col,
+    scroll_top: patch.scroll_top !== undefined ? patch.scroll_top : current.scroll_top,
     last_session_context_json: nextContext,
     updated_at: Date.now()
   };
@@ -152,11 +171,44 @@ export function updateWorksheet(id: string, patch: WorksheetPatch): WorksheetRow
     next.body,
     next.cursor_line,
     next.cursor_col,
+    next.scroll_top,
     next.last_session_context_json,
     next.updated_at,
     next.id
   );
   return next;
+}
+
+export function upsertWorksheet(input: NewWorksheet): WorksheetRow {
+  const now = Date.now();
+  const existing = getWorksheet(input.id);
+  const created_at = existing?.created_at ?? now;
+  const row: WorksheetRow = {
+    id: input.id,
+    title: input.title,
+    body: input.body,
+    cursor_line: input.cursor_line ?? null,
+    cursor_col: input.cursor_col ?? null,
+    scroll_top: input.scroll_top ?? null,
+    last_session_context_json: resolveContextJson(
+      input.last_session_context_json,
+      input.last_session_context
+    ),
+    created_at,
+    updated_at: now
+  };
+  stmts(getDatabase()).upsert.run(
+    row.id,
+    row.title,
+    row.body,
+    row.cursor_line,
+    row.cursor_col,
+    row.scroll_top,
+    row.last_session_context_json,
+    row.created_at,
+    row.updated_at
+  );
+  return row;
 }
 
 export function deleteWorksheet(id: string): boolean {

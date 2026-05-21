@@ -30,6 +30,7 @@
 
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
+import { notImplemented } from './errors';
 import { getProfile as storageGetProfile } from '../storage/profiles';
 import { getSecret } from '../secrets/safeStorage';
 import { Session, type OpenSessionOptions } from '../snowflake/session';
@@ -274,6 +275,9 @@ export function register(ipcMain: IpcMain): void {
     CHANNELS.sessions.setContext,
     (_event, sessionId: SessionId, context: Partial<SessionContext>) =>
       setSessionContext(sessionId, context)
+  );
+  ipcMain.handle(CHANNELS.sessionsExt.getEffectiveContext, () =>
+    notImplemented('sessions.getEffectiveContext', 'B3')
   );
 
   // Dynamic import so unit tests (which run outside Electron via bun) never

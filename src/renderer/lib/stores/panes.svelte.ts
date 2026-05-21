@@ -4,7 +4,12 @@ import { getPaneState } from '../panes/paneStore.svelte';
 
 export function createPaneTree() {
   const initialPaneId = nanoid();
-  let tree = $state<LayoutTree>({ kind: 'leaf', paneId: initialPaneId });
+  const initialWorksheetId = nanoid();
+  let tree = $state<LayoutTree>({
+    kind: 'leaf',
+    paneId: initialPaneId,
+    worksheetId: initialWorksheetId
+  });
   let activePaneId = $state<string>(initialPaneId);
 
   function findLeaf(
@@ -36,7 +41,12 @@ export function createPaneTree() {
     if (!found) return;
 
     const newPaneId = nanoid();
-    const newLeaf: LayoutTree = { kind: 'leaf', paneId: newPaneId };
+    const newWorksheetId = nanoid();
+    const newLeaf: LayoutTree = {
+      kind: 'leaf',
+      paneId: newPaneId,
+      worksheetId: newWorksheetId
+    };
 
     if (!found.parent) {
       tree = {
@@ -75,7 +85,8 @@ export function createPaneTree() {
 
     if (!found.parent) {
       const newPaneId = nanoid();
-      tree = { kind: 'leaf', paneId: newPaneId };
+      const newWorksheetId = nanoid();
+      tree = { kind: 'leaf', paneId: newPaneId, worksheetId: newWorksheetId };
       activePaneId = newPaneId;
       return;
     }
@@ -154,7 +165,8 @@ export function createPaneTree() {
 
   function reset() {
     const newPaneId = nanoid();
-    tree = { kind: 'leaf', paneId: newPaneId };
+    const newWorksheetId = nanoid();
+    tree = { kind: 'leaf', paneId: newPaneId, worksheetId: newWorksheetId };
     activePaneId = newPaneId;
   }
 

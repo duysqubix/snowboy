@@ -15,4 +15,10 @@ export function register(ipcMain: IpcMain): void {
   ipcMain.handle(CHANNELS.workspace.listWorksheets, () =>
     notImplemented('workspace.listWorksheets', 'T4.2')
   );
+  ipcMain.handle(CHANNELS.workspace.saveWorkspace, () =>
+    notImplemented('workspace.saveWorkspace', 'T4.1')
+  );
+  ipcMain.handle(CHANNELS.workspace.getWorksheet, () =>
+    notImplemented('workspace.getWorksheet', 'T4.2')
+  );
 }

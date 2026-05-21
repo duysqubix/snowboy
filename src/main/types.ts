@@ -132,14 +132,44 @@ export interface Worksheet {
   body: string;
   cursorLine?: number;
   cursorCol?: number;
+  scrollTop?: number;
   lastSessionContext?: SessionContext;
   createdAt: number;
   updatedAt: number;
 }
 
 export type LayoutTree =
-  | { kind: 'leaf'; paneId: string }
+  | { kind: 'leaf'; paneId: string; worksheetId: string }
   | { kind: 'split'; direction: 'h' | 'v'; sizes: number[]; children: LayoutTree[] };
+
+export interface LayoutTreeSerialized {
+  version: 1 | 2;
+  tree: LayoutTree;
+}
+
+export type ThemeMode = 'light' | 'dark' | 'system';
+export type EffectiveTheme = 'light' | 'dark';
+
+export interface Settings {
+  theme: ThemeMode;
+  fontSize: number;
+  tabWidth: 2 | 4 | 8;
+  wordWrap: boolean;
+  telemetryEnabled: boolean;
+  dataDir: string;
+}
+
+export interface ThemeChangedEvent {
+  effective: EffectiveTheme;
+  mode: ThemeMode;
+}
+
+export interface EffectiveContext {
+  role?: string;
+  warehouse?: string;
+  database?: string;
+  schema?: string;
+}
 
 export interface SnowboyApi {
   connections: {
@@ -171,6 +201,18 @@ export interface SnowboyApi {
     listObjects(sessionId: SessionId, db: string, schema: string): Promise<SchemaObject[]>;
     getColumns(sessionId: SessionId, obj: ObjectRef): Promise<Column[]>;
     getDDL(sessionId: SessionId, obj: ObjectRef): Promise<string>;
+    invalidate(profileId: string, database?: string, schema?: string): Promise<void>;
+  };
+  sessionsExt: {
+    getEffectiveContext(sessionId: SessionId): Promise<EffectiveContext | null>;
+  };
+  settings: {
+    get(): Promise<Settings>;
+    set(partial: Partial<Settings>): Promise<void>;
+  };
+  theme: {
+    get(): Promise<EffectiveTheme>;
+    onChanged(handler: (event: ThemeChangedEvent) => void): () => void;
   };
   history: {
     list(filter?: HistoryFilter): Promise<HistoryEntry[]>;
@@ -181,5 +223,7 @@ export interface SnowboyApi {
     loadLayout(): Promise<LayoutTree>;
     saveWorksheet(w: Worksheet): Promise<void>;
     listWorksheets(): Promise<Worksheet[]>;
+    saveWorkspace(payload: { layout: LayoutTreeSerialized; worksheets: Worksheet[] }): Promise<void>;
+    getWorksheet(id: string): Promise<Worksheet | null>;
   };
 }

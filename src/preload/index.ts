@@ -3,9 +3,12 @@ import { CHANNELS } from '../main/ipc/channels';
 import type {
   Column,
   ConnectionProfile,
+  EffectiveContext,
+  EffectiveTheme,
   HistoryEntry,
   HistoryFilter,
   LayoutTree,
+  LayoutTreeSerialized,
   ObjectRef,
   QueryCompleteEvent,
   QueryErrorEvent,
@@ -15,8 +18,10 @@ import type {
   SchemaObject,
   SessionContext,
   SessionId,
+  Settings,
   SnowboyApi,
   TestResult,
+  ThemeChangedEvent,
   Worksheet
 } from '../main/types';
 
@@ -93,7 +98,22 @@ const api = {
     getColumns: (sessionId: SessionId, obj: ObjectRef): Promise<Column[]> =>
       ipcRenderer.invoke(CHANNELS.schema.getColumns, sessionId, obj),
     getDDL: (sessionId: SessionId, obj: ObjectRef): Promise<string> =>
-      ipcRenderer.invoke(CHANNELS.schema.getDDL, sessionId, obj)
+      ipcRenderer.invoke(CHANNELS.schema.getDDL, sessionId, obj),
+    invalidate: (profileId: string, database?: string, schema?: string): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.schema.invalidate, profileId, database, schema)
+  },
+  sessionsExt: {
+    getEffectiveContext: (sessionId: SessionId): Promise<EffectiveContext | null> =>
+      ipcRenderer.invoke(CHANNELS.sessionsExt.getEffectiveContext, sessionId)
+  },
+  settings: {
+    get: (): Promise<Settings> => ipcRenderer.invoke(CHANNELS.settings.get),
+    set: (partial: Partial<Settings>): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.settings.set, partial)
+  },
+  theme: {
+    get: (): Promise<EffectiveTheme> => ipcRenderer.invoke(CHANNELS.theme.get),
+    onChanged: makeEventBridge<ThemeChangedEvent>(CHANNELS.themeEvents.changed)
   },
   history: {
     list: (filter?: HistoryFilter): Promise<HistoryEntry[]> =>
@@ -109,7 +129,13 @@ const api = {
     saveWorksheet: (w: Worksheet): Promise<void> =>
       ipcRenderer.invoke(CHANNELS.workspace.saveWorksheet, w),
     listWorksheets: (): Promise<Worksheet[]> =>
-      ipcRenderer.invoke(CHANNELS.workspace.listWorksheets)
+      ipcRenderer.invoke(CHANNELS.workspace.listWorksheets),
+    saveWorkspace: (payload: {
+      layout: LayoutTreeSerialized;
+      worksheets: Worksheet[];
+    }): Promise<void> => ipcRenderer.invoke(CHANNELS.workspace.saveWorkspace, payload),
+    getWorksheet: (id: string): Promise<Worksheet | null> =>
+      ipcRenderer.invoke(CHANNELS.workspace.getWorksheet, id)
   }
 } satisfies SnowboyApi;
 
