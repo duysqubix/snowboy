@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onMount, untrack } from 'svelte';
+  import { getContext, onDestroy, onMount, untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { getOrCreatePaneState } from './paneStore.svelte';
   import { panes as panesSingleton, type PaneTreeStore } from '../stores/panes.svelte';
@@ -13,10 +13,127 @@
   import SqlEditor from '../editor/SqlEditor.svelte';
   import { splitSql } from '../editor/splitSql';
   import ResultsTabs from '../results/ResultsTabs.svelte';
+  import type { Worksheet } from '../../../main/types';
 
-  let { paneId }: { paneId: string } = $props();
+  let { paneId, worksheetId }: { paneId: string; worksheetId: string } = $props();
 
-  const paneState = untrack(() => getOrCreatePaneState(paneId));
+  const paneState = untrack(() => getOrCreatePaneState(paneId, worksheetId));
+
+  const SAVE_DEBOUNCE_MS = 500;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingSave = false;
+  // Counts post-hydration mutations to the worksheet snapshot. Stays 0 for
+  // a freshly-minted pane with no user interaction, so we never create a
+  // ghost SQLite row for an untouched empty editor.
+  let interactionCount = $state(0);
+
+  function buildSnapshot(): Worksheet {
+    const w: Worksheet = {
+      id: paneState.worksheetId,
+      title: paneState.title,
+      body: paneState.body,
+      createdAt: 0,
+      updatedAt: 0
+    };
+    if (paneState.cursorLine !== null) w.cursorLine = paneState.cursorLine;
+    if (paneState.cursorCol !== null) w.cursorCol = paneState.cursorCol;
+    if (paneState.scrollTop !== null) w.scrollTop = paneState.scrollTop;
+    return w;
+  }
+
+  async function flushNow(): Promise<void> {
+    if (saveTimer !== null) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (!pendingSave) return;
+    if (!paneState.hydrated) return;
+    pendingSave = false;
+    try {
+      await snowboy.workspace.saveWorksheet(buildSnapshot());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[WorksheetPane] save failed: ${message}`);
+    }
+  }
+
+  function scheduleSave(): void {
+    if (!paneState.hydrated) return;
+    pendingSave = true;
+    if (saveTimer !== null) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void flushNow();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  onMount(() => {
+    let cancelled = false;
+    const requestedId = paneState.worksheetId;
+
+    void (async () => {
+      try {
+        const stored = await snowboy.workspace.getWorksheet(requestedId);
+        if (cancelled) return;
+        // Stale-load guard: if the pane's worksheetId changed while the
+        // fetch was in flight, drop the response (reactivity-critic #7).
+        if (paneState.worksheetId !== requestedId) return;
+        if (stored !== null) {
+          paneState.body = stored.body;
+          paneState.title = stored.title;
+          paneState.cursorLine = stored.cursorLine ?? null;
+          paneState.cursorCol = stored.cursorCol ?? null;
+          paneState.scrollTop = stored.scrollTop ?? null;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[WorksheetPane] hydrate failed: ${message}`);
+      } finally {
+        if (!cancelled && paneState.worksheetId === requestedId) {
+          paneState.hydrated = true;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  onDestroy(() => {
+    if (saveTimer !== null) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (pendingSave && paneState.hydrated) {
+      pendingSave = false;
+      // Pane-close flush: fire-and-forget the IPC. Closing a single pane
+      // does not race with main-process shutdown (that's T4.1's
+      // `before-quit` problem). On error we log; there is no UI to toast
+      // against once unmount has started.
+      const snapshot = buildSnapshot();
+      void snowboy.workspace.saveWorksheet(snapshot).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[WorksheetPane] flush-on-destroy failed: ${message}`);
+      });
+    }
+  });
+
+  $effect(() => {
+    // Reactivity tracking: read every field whose change should re-arm
+    // the debounced save. `interactionCount` is the gate so an
+    // unchanged-hydrated pane does not create a SQLite row on its own.
+    void paneState.body;
+    void paneState.title;
+    void paneState.cursorLine;
+    void paneState.cursorCol;
+    void paneState.scrollTop;
+    const count = interactionCount;
+
+    if (!paneState.hydrated) return;
+    if (count === 0) return;
+    scheduleSave();
+  });
 
   $effect(() => {
     const profile = profiles.list.find((p) => p.id === profiles.activeProfileId);
@@ -34,6 +151,23 @@
       paneState.schema = profile.defaultSchema;
     }
   });
+
+  function handleEditorChange(v: string): void {
+    paneState.body = v;
+    paneState.dirty = true;
+    interactionCount++;
+  }
+
+  function handleCursorChange(line: number, col: number): void {
+    paneState.cursorLine = line;
+    paneState.cursorCol = col;
+    interactionCount++;
+  }
+
+  function handleScrollChange(top: number): void {
+    paneState.scrollTop = top;
+    interactionCount++;
+  }
 
   const getPaneStore = getContext<(() => PaneTreeStore) | undefined>('panes-store');
   const panes = $derived(getPaneStore ? getPaneStore() : panesSingleton);
@@ -195,7 +329,18 @@
   </div>
 
   <div class="flex-1 border-b border-border min-h-0">
-    <SqlEditor bind:value={paneState.body} theme={editorTheme} />
+    {#if paneState.hydrated}
+      <SqlEditor
+        value={paneState.body}
+        theme={editorTheme}
+        initialCursorLine={paneState.cursorLine}
+        initialCursorCol={paneState.cursorCol}
+        initialScrollTop={paneState.scrollTop}
+        onChange={handleEditorChange}
+        onCursorChange={handleCursorChange}
+        onScrollChange={handleScrollChange}
+      />
+    {/if}
   </div>
 
   <div class="h-[35%] shrink-0 min-h-0">

@@ -8,7 +8,7 @@
 </script>
 
 {#if tree.kind === 'leaf'}
-  <WorksheetPane paneId={tree.paneId} />
+  <WorksheetPane paneId={tree.paneId} worksheetId={tree.worksheetId} />
 {:else}
   <Splitpanes horizontal={tree.direction === 'h'}>
     {#each tree.children as child, i (i)}
