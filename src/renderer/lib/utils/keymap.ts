@@ -141,7 +141,7 @@ export function installKeymap(paneStore: PaneTreeStore = panesSingleton): () => 
     registerShortcut({
       id: 'pane.close',
       combo: { cmdOrCtrl: true, code: 'KeyW' },
-      scope: 'global-block-editor',
+      scope: 'global-allow-editor',
       description: 'Close active pane',
       handler: (e) => {
         e.preventDefault();
