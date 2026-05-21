@@ -30,4 +30,8 @@ coverage/
 
 *.tsbuildinfo
 
+# electron-vite drops a timestamped temp config next to the real one when
+# starting; harmless build artifact, never want it tracked.
+electron.vite.config.*.mjs
+
 .sisyphus/run-continuation/

@@ -18,6 +18,7 @@ import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron';
 
 import type { Settings } from '../types';
 import { readSettings, writeSettings } from '../storage/settings';
+import { settingsEvents } from '../storage/settingsEvents';
 import { CHANNELS } from './channels';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -58,6 +59,7 @@ export function register(ipcMain: IpcMain): void {
     CHANNELS.settings.set,
     (_e, partial: Partial<Settings>): Settings => {
       const merged = writeSettings(partial);
+      settingsEvents.emit('changed', merged);
       broadcaster(merged);
       return merged;
     }
