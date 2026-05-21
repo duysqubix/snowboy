@@ -1,13 +1,13 @@
 /**
- * T3.5 — schema.* IPC handlers.
+ * T3.5 — schema.* IPC handlers (B1: SQLite-backed cache wired in).
  *
  * Backs the object-browser tree and the DDL viewer. Each handler resolves
  * a `SessionId` to a live `Session` via the registry T3.2 owns, then
  * issues a Snowflake-side enumeration:
  *
- *   listDatabases  -> SHOW DATABASES                       (cached)
- *   listSchemas    -> SHOW SCHEMAS IN DATABASE "<db>"      (cached)
- *   listObjects    -> SHOW TABLES + SHOW VIEWS (parallel)  (cached)
+ *   listDatabases  -> SHOW DATABASES                       (cached, 5-min TTL)
+ *   listSchemas    -> SHOW SCHEMAS IN DATABASE "<db>"      (cached, 5-min TTL)
+ *   listObjects    -> SHOW TABLES + SHOW VIEWS (parallel)  (cached, 5-min TTL)
  *   getColumns     -> INFORMATION_SCHEMA.COLUMNS           (no cache)
  *   getDDL         -> SELECT GET_DDL(...)                  (no cache)
  *
@@ -19,32 +19,77 @@
  *
  * Caching:
  *
- * Wave 1's `schemaCache` exposes opaque-payload reads only — it returns
- * the JSON we put in, with no `fetched_at` field. To enforce the 5-minute
- * TTL the plan asks for, we wrap our payloads in `{ fetchedAt, data }`
- * envelopes here. Tree-shape data (databases, schemas, tables, views)
- * is cached; per-object metadata (columns, DDL) is not — they are fast
- * single queries and `getColumns` rarely runs twice in a row.
+ * `schemaCache` stores opaque JSON payloads keyed by
+ * (profile_id, database_name, schema_name, object_type). We wrap every
+ * cached value in a `{ fetchedAt, data }` envelope so the IPC layer can
+ * enforce a 5-minute TTL without round-tripping `fetched_at` through the
+ * row. On read, an expired envelope is treated as a miss and a fresh
+ * fetch is issued. Per-object metadata (columns, DDL) is NOT cached —
+ * single-row queries with high churn potential.
+ *
+ * The DB-list cache key uses the sentinel database name `'__all__'` since
+ * `listDatabases` is profile-scoped rather than database-scoped. The
+ * sentinel is shared with `invalidateByProfile` (which drops every row,
+ * sentinel included) so user-facing Refresh always wipes it.
  *
  * Function objects are NOT enumerated in v0.1. The shared `SchemaObjectKind`
  * is `'table' | 'view' | 'database' | 'schema' | 'column'`; widening it
  * touches `src/main/types.ts` which Bucket Y also mutates this wave, so
  * we defer functions to v0.2.
- *
- * The `invalidate` channel that pairs with the user-facing "Refresh"
- * action is intentionally NOT added here — it touches `types.ts` and
- * `channels.ts` which the orchestrator will reconcile post-merge.
  */
 
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
-import { notImplemented as notImplementedB1 } from './errors';
 import type { Session } from '../snowflake/session';
 import type { ColumnMeta } from '../snowflake/types';
 import type { Column, ObjectRef, SchemaObject, SessionId } from '../types';
-import { requireSession } from './sessions';
+import { onSessionClose, requireSession } from './sessions';
+import {
+  getCached,
+  invalidateByProfile as cacheInvalidateByProfile,
+  invalidateByProfileDb as cacheInvalidateByProfileDb,
+  invalidateByProfileDbSchema as cacheInvalidateByProfileDbSchema,
+  setCached,
+  type ObjectType
+} from '../storage/schemaCache';
 
 const SCHEMA_QUERY_TIMEOUT_MS = 30_000;
+const SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
+const DB_LIST_SENTINEL = '__all__';
+
+interface CacheEnvelope<T> {
+  fetchedAt: number;
+  data: T;
+}
+
+function isEnvelope<T>(value: unknown): value is CacheEnvelope<T> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'fetchedAt' in value &&
+    'data' in value &&
+    typeof (value as { fetchedAt: unknown }).fetchedAt === 'number'
+  );
+}
+
+async function getOrFetch<T>(
+  profileId: string,
+  database: string,
+  schema: string | null,
+  objectType: ObjectType,
+  fetcher: () => Promise<T>
+): Promise<T> {
+  const cached = getCached(profileId, database, schema, objectType);
+  if (isEnvelope<T>(cached)) {
+    if (Date.now() - cached.fetchedAt <= SCHEMA_CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+  const fresh = await fetcher();
+  const envelope: CacheEnvelope<T> = { fetchedAt: Date.now(), data: fresh };
+  setCached(profileId, database, schema, objectType, envelope);
+  return fresh;
+}
 
 // ---------------------------------------------------------------------------
 // SQL helpers
@@ -261,7 +306,14 @@ async function fetchDDL(session: Session, obj: ObjectRef): Promise<string> {
 
 export async function listDatabases(sessionId: SessionId): Promise<string[]> {
   const session = requireSession(sessionId);
-  const names = await fetchDatabaseNames(session);
+  const profileId = session.getProfileId();
+  const names = await getOrFetch<string[]>(
+    profileId,
+    DB_LIST_SENTINEL,
+    null,
+    'database',
+    () => fetchDatabaseNames(session)
+  );
   console.log(`[schema] listDatabases: returning ${names.length} databases`);
   return names;
 }
@@ -274,7 +326,14 @@ export async function listSchemas(
     throw new Error('schema.listSchemas: database is required');
   }
   const session = requireSession(sessionId);
-  return fetchSchemaNames(session, database);
+  const profileId = session.getProfileId();
+  return getOrFetch<string[]>(
+    profileId,
+    database,
+    null,
+    'schema',
+    () => fetchSchemaNames(session, database)
+  );
 }
 
 export async function listObjects(
@@ -289,11 +348,35 @@ export async function listObjects(
     throw new Error('schema.listObjects: schema is required');
   }
   const session = requireSession(sessionId);
+  const profileId = session.getProfileId();
   const [tables, views] = await Promise.all([
-    fetchObjectsOfKind(session, database, schema, 'TABLES', 'table'),
-    fetchObjectsOfKind(session, database, schema, 'VIEWS', 'view')
+    getOrFetch<SchemaObject[]>(profileId, database, schema, 'table', () =>
+      fetchObjectsOfKind(session, database, schema, 'TABLES', 'table')
+    ),
+    getOrFetch<SchemaObject[]>(profileId, database, schema, 'view', () =>
+      fetchObjectsOfKind(session, database, schema, 'VIEWS', 'view')
+    )
   ]);
   return [...tables, ...views];
+}
+
+export function invalidateSchemaCache(
+  profileId: string,
+  database?: string,
+  schema?: string | null
+): void {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    throw new Error('schema.invalidate: profileId is required');
+  }
+  if (database === undefined || database === '') {
+    cacheInvalidateByProfile(profileId);
+    return;
+  }
+  if (schema === undefined || schema === null || schema === '') {
+    cacheInvalidateByProfileDb(profileId, database);
+    return;
+  }
+  cacheInvalidateByProfileDbSchema(profileId, database, schema);
 }
 
 export async function getColumns(
@@ -343,7 +426,24 @@ export function register(ipcMain: IpcMain): void {
     CHANNELS.schema.getDDL,
     (_event, sessionId: SessionId, obj: ObjectRef) => getDDL(sessionId, obj)
   );
-  ipcMain.handle(CHANNELS.schema.invalidate, () =>
-    notImplementedB1('schema.invalidate', 'B1')
+  ipcMain.handle(
+    CHANNELS.schema.invalidate,
+    (_event, profileId: string, database?: string, schema?: string) => {
+      invalidateSchemaCache(profileId, database, schema);
+    }
   );
+
+  // Session close → full-profile cache wipe. A profile's only active
+  // session closing means the next session-open should re-fetch from
+  // Snowflake instead of trusting up to 5-min-old TTL entries that may
+  // pre-date adds/drops the user did in another tool. Errors swallowed
+  // so a single bad close doesn't block other handlers on the same
+  // event.
+  onSessionClose((profileId) => {
+    try {
+      cacheInvalidateByProfile(profileId);
+    } catch (err) {
+      console.warn('[schema] onSessionClose: cache invalidate failed', err);
+    }
+  });
 }

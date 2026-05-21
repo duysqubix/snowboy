@@ -100,6 +100,38 @@ export function requireSession(sessionId: SessionId): Session {
 }
 
 // ---------------------------------------------------------------------------
+// Session-close internal hook (Wave 4 B1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Internal in-process observer for session closures. The schema-cache
+ * module subscribes so the cache wipes on close — see `src/main/ipc/schema.ts`.
+ * Not an IPC channel; receivers live in the main process.
+ */
+export type SessionCloseHandler = (profileId: string) => void;
+
+const closeHandlers = new Set<SessionCloseHandler>();
+
+export function onSessionClose(handler: SessionCloseHandler): () => void {
+  closeHandlers.add(handler);
+  return () => closeHandlers.delete(handler);
+}
+
+function fireCloseHandlers(profileId: string): void {
+  for (const h of closeHandlers) {
+    try {
+      h(profileId);
+    } catch (err) {
+      console.warn('[sessions] close handler threw', err);
+    }
+  }
+}
+
+export function __clearCloseHandlersForTesting(): void {
+  closeHandlers.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Translation
 // ---------------------------------------------------------------------------
 
@@ -216,7 +248,9 @@ export async function closeSession(sessionId: SessionId): Promise<void> {
   if (session === undefined) {
     return;
   }
+  const profileId = session.getProfileId();
   sessions.delete(sessionId);
+  fireCloseHandlers(profileId);
   try {
     await session.close();
   } catch (err) {
@@ -245,6 +279,9 @@ export async function setSessionContext(
 export async function closeAllSessions(): Promise<void> {
   const all = Array.from(sessions.values());
   sessions.clear();
+  for (const s of all) {
+    fireCloseHandlers(s.getProfileId());
+  }
   await Promise.all(
     all.map(async (s) => {
       try {

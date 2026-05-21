@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertCircle, Loader2, Search } from 'lucide-svelte';
+  import { AlertCircle, Loader2, RefreshCw, Search } from 'lucide-svelte';
   import { toast } from 'svelte-sonner';
 
   import { Button } from '$lib/components/ui/button';
@@ -26,6 +26,8 @@
   installSessionsBridge();
 
   let searchQuery = $state('');
+  let refreshCounter = $state(0);
+  let refreshing = $state(false);
 
   let activeProfile = $derived(
     profiles.list.find((p) => p.id === profiles.activeProfileId) ?? null
@@ -33,6 +35,7 @@
   let sessionId = $derived(sessions.activeSessionId);
   let sessionStatus = $derived(sessions.status);
   let sessionError = $derived(sessions.lastError);
+  let canRefresh = $derived(sessionId !== null && activeProfile !== null && !refreshing);
 
   let rootNodes = $state<BrowserNode[]>([]);
   let rootLoading = $state(false);
@@ -305,17 +308,49 @@
     lastLoadedSessionId = null;
     void loadDatabases(sid);
   }
+
+  async function handleRefresh(): Promise<void> {
+    const sid = sessionId;
+    const profile = activeProfile;
+    if (sid === null || profile === null || refreshing) return;
+    refreshing = true;
+    try {
+      await snowboy.schema.invalidate(profile.id);
+      refreshCounter += 1;
+      lastLoadedSessionId = null;
+      await loadDatabases(sid);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Refresh failed: ${message}`);
+    } finally {
+      refreshing = false;
+    }
+  }
 </script>
 
 <div class="flex flex-col h-full w-full bg-background">
   <div class="p-2 border-b">
-    <div class="relative">
-      <Search class="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-      <Input
-        placeholder="Search objects..."
-        class="pl-8 h-9"
-        bind:value={searchQuery}
-      />
+    <div class="flex items-center gap-1">
+      <div class="relative flex-1">
+        <Search class="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Search objects..."
+          class="pl-8 h-9"
+          bind:value={searchQuery}
+        />
+      </div>
+      <button
+        type="button"
+        class="h-9 w-9 inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors {canRefresh
+          ? 'cursor-pointer'
+          : 'opacity-50 cursor-not-allowed'}"
+        title={canRefresh ? 'Refresh' : 'Refresh (connect first)'}
+        aria-label="Refresh object browser"
+        disabled={!canRefresh}
+        onclick={() => void handleRefresh()}
+      >
+        <RefreshCw class="h-4 w-4 {refreshing ? 'animate-spin' : ''}" />
+      </button>
     </div>
     {#if activeProfile !== null}
       <div class="mt-2 text-xs text-muted-foreground truncate" title={activeProfile.name}>
@@ -367,7 +402,12 @@
         {/if}
       {:else}
         {#each filteredData as node (node.id)}
-          <TreeNode {node} {loadChildren} onContextMenu={handleContextMenu} />
+          <TreeNode
+            {node}
+            {loadChildren}
+            {refreshCounter}
+            onContextMenu={handleContextMenu}
+          />
         {/each}
       {/if}
     </div>

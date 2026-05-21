@@ -11,6 +11,7 @@
     FunctionSquare,
     Table2
   } from 'lucide-svelte';
+  import { untrack } from 'svelte';
   import type { BrowserNode, LoadChildren } from './types';
   import TreeNode from './TreeNode.svelte';
 
@@ -18,18 +19,31 @@
     node,
     level = 0,
     loadChildren,
-    onContextMenu
+    onContextMenu,
+    refreshCounter = 0
   } = $props<{
     node: BrowserNode;
     level?: number;
     loadChildren: LoadChildren;
     onContextMenu: (e: MouseEvent, node: BrowserNode) => void;
+    refreshCounter?: number;
   }>();
 
   let expanded = $state(false);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let children = $state<BrowserNode[] | undefined>(undefined);
+  let seenRefreshCounter = $state(untrack(() => refreshCounter));
+
+  $effect(() => {
+    const incoming = refreshCounter;
+    if (incoming !== untrack(() => seenRefreshCounter)) {
+      seenRefreshCounter = incoming;
+      children = undefined;
+      error = null;
+      expanded = false;
+    }
+  });
 
   async function toggleExpand() {
     if (!node.hasChildren) return;
@@ -149,6 +163,7 @@
           level={level + 1}
           {loadChildren}
           {onContextMenu}
+          {refreshCounter}
         />
       {/each}
       {#if children.length === 0}

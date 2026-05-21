@@ -4,16 +4,23 @@ import { tmpdir } from 'node:os';
 import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { IpcMain } from 'electron';
+
 import {
   getColumns,
   getDDL,
+  invalidateSchemaCache,
   listDatabases,
   listObjects,
-  listSchemas
+  listSchemas,
+  register as registerSchemaIpc
 } from '../../../src/main/ipc/schema';
 import {
+  __clearCloseHandlersForTesting,
   __clearSessionsForTesting,
   __setSessionFactoryForTesting,
+  closeSession,
+  onSessionClose,
   openSession,
   type SessionFactory
 } from '../../../src/main/ipc/sessions';
@@ -131,6 +138,7 @@ beforeEach(async () => {
 afterEach(async () => {
   __setSessionFactoryForTesting(null);
   __clearSessionsForTesting();
+  __clearCloseHandlersForTesting();
   __setSafeStorageForTesting(null);
   __setStoragePathForTesting(null);
   closeDatabase();
@@ -193,23 +201,85 @@ describe('listDatabases', () => {
     expect(executed).toEqual(['SHOW DATABASES']);
   });
 
-  test('re-runs SHOW DATABASES on each call (caching deferred to Wave 4)', async () => {
+  test('second call within TTL is served from cache (no second SHOW DATABASES)', async () => {
     seedProfile();
     const id = await openWithStubs([
-      {
-        match: /^SHOW DATABASES$/,
-        result: { columns: [nameColumn], rows: [['DB1']] }
-      },
       {
         match: /^SHOW DATABASES$/,
         result: { columns: [nameColumn], rows: [['DB1']] }
       }
     ]);
 
-    await listDatabases(id);
-    await listDatabases(id);
+    const first = await listDatabases(id);
+    const second = await listDatabases(id);
 
-    expect(executed).toEqual(['SHOW DATABASES', 'SHOW DATABASES']);
+    expect(first).toEqual(['DB1']);
+    expect(second).toEqual(['DB1']);
+    expect(executed).toEqual(['SHOW DATABASES']);
+  });
+
+  test('cache entry older than 5 minutes is treated as a miss', async () => {
+    seedProfile();
+    let showDbCall = 0;
+    const id = await openWithStubs([
+      {
+        match: /^SHOW DATABASES$/,
+        result: () => {
+          showDbCall += 1;
+          return showDbCall === 1
+            ? { columns: [nameColumn], rows: [['DB1']] }
+            : { columns: [nameColumn], rows: [['DB1'], ['DB2']] };
+        }
+      }
+    ]);
+
+    const originalNow = Date.now;
+    let fakeNow = originalNow.call(Date);
+    Date.now = () => fakeNow;
+    try {
+      const first = await listDatabases(id);
+      expect(first).toEqual(['DB1']);
+      fakeNow += 5 * 60 * 1000 + 1;
+      const second = await listDatabases(id);
+      expect(second).toEqual(['DB1', 'DB2']);
+      expect(executed).toEqual(['SHOW DATABASES', 'SHOW DATABASES']);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test('listSchemas and listObjects both populate and serve from cache', async () => {
+    seedProfile();
+    const id = await openWithStubs([
+      {
+        match: /^SHOW SCHEMAS IN DATABASE "DB_A"$/,
+        result: { columns: [nameColumn], rows: [['PUBLIC']] }
+      },
+      {
+        match: /^SHOW TABLES IN SCHEMA "DB_A"\."PUBLIC"$/,
+        result: {
+          columns: [nameColumn, commentColumn],
+          rows: [['T1', null]]
+        }
+      },
+      {
+        match: /^SHOW VIEWS IN SCHEMA "DB_A"\."PUBLIC"$/,
+        result: { columns: [nameColumn, commentColumn], rows: [] }
+      }
+    ]);
+
+    await listSchemas(id, 'DB_A');
+    await listSchemas(id, 'DB_A');
+    await listObjects(id, 'DB_A', 'PUBLIC');
+    await listObjects(id, 'DB_A', 'PUBLIC');
+
+    expect(executed.sort()).toEqual(
+      [
+        'SHOW SCHEMAS IN DATABASE "DB_A"',
+        'SHOW TABLES IN SCHEMA "DB_A"."PUBLIC"',
+        'SHOW VIEWS IN SCHEMA "DB_A"."PUBLIC"'
+      ].sort()
+    );
   });
 });
 
@@ -443,5 +513,132 @@ describe('getDDL', () => {
 describe('unknown session', () => {
   test('listDatabases throws on a stale session id', async () => {
     await expect(listDatabases('stale' as SessionId)).rejects.toThrow(/Session not found/);
+  });
+});
+
+describe('invalidateSchemaCache', () => {
+  test('full-profile invalidate forces a re-fetch on the next listDatabases', async () => {
+    seedProfile();
+    let showDbCall = 0;
+    const id = await openWithStubs([
+      {
+        match: /^SHOW DATABASES$/,
+        result: () => {
+          showDbCall += 1;
+          return showDbCall === 1
+            ? { columns: [nameColumn], rows: [['DB1']] }
+            : { columns: [nameColumn], rows: [['DB1'], ['DB2']] };
+        }
+      }
+    ]);
+
+    await listDatabases(id);
+    invalidateSchemaCache('p1');
+    const second = await listDatabases(id);
+
+    expect(second).toEqual(['DB1', 'DB2']);
+    expect(executed).toEqual(['SHOW DATABASES', 'SHOW DATABASES']);
+  });
+
+  test('scoped invalidate(db, schema) clears only the matching slot', async () => {
+    seedProfile();
+    let tablesCall = 0;
+    const id = await openWithStubs([
+      {
+        match: /^SHOW DATABASES$/,
+        result: { columns: [nameColumn], rows: [['DB_A']] }
+      },
+      {
+        match: /^SHOW SCHEMAS IN DATABASE "DB_A"$/,
+        result: { columns: [nameColumn], rows: [['PUBLIC']] }
+      },
+      {
+        match: /^SHOW TABLES IN SCHEMA "DB_A"\."PUBLIC"$/,
+        result: () => {
+          tablesCall += 1;
+          return tablesCall === 1
+            ? {
+                columns: [nameColumn, commentColumn],
+                rows: [['T1', null]]
+              }
+            : {
+                columns: [nameColumn, commentColumn],
+                rows: [
+                  ['T1', null],
+                  ['T2', null]
+                ]
+              };
+        }
+      },
+      {
+        match: /^SHOW VIEWS IN SCHEMA "DB_A"\."PUBLIC"$/,
+        result: { columns: [nameColumn, commentColumn], rows: [] }
+      }
+    ]);
+
+    await listDatabases(id);
+    await listSchemas(id, 'DB_A');
+    await listObjects(id, 'DB_A', 'PUBLIC');
+
+    invalidateSchemaCache('p1', 'DB_A', 'PUBLIC');
+
+    const second = await listObjects(id, 'DB_A', 'PUBLIC');
+    expect(second.map((o) => o.name)).toEqual(['T1', 'T2']);
+
+    await listDatabases(id);
+    await listSchemas(id, 'DB_A');
+
+    expect(executed.filter((s) => s === 'SHOW DATABASES')).toHaveLength(1);
+    expect(executed.filter((s) => s.startsWith('SHOW SCHEMAS'))).toHaveLength(1);
+    expect(
+      executed.filter((s) => s.startsWith('SHOW TABLES'))
+    ).toHaveLength(2);
+  });
+});
+
+describe('session-close hook', () => {
+  function fakeIpcMain(): IpcMain {
+    return { handle: () => undefined } as unknown as IpcMain;
+  }
+
+  test('closeSession fires registered handlers with the profileId', async () => {
+    seedProfile();
+    const received: string[] = [];
+    onSessionClose((pid) => {
+      received.push(pid);
+    });
+
+    const id = await openWithStubs([]);
+    await closeSession(id);
+
+    expect(received).toEqual(['p1']);
+  });
+
+  test('schema register() subscribes a handler that wipes the profile cache on close', async () => {
+    seedProfile();
+    registerSchemaIpc(fakeIpcMain());
+
+    const id = await openWithStubs([
+      {
+        match: /^SHOW DATABASES$/,
+        result: { columns: [nameColumn], rows: [['DB1']] }
+      }
+    ]);
+
+    await listDatabases(id);
+    await closeSession(id);
+
+    const reopenId = await openWithStubs(
+      [
+        {
+          match: /^SHOW DATABASES$/,
+          result: { columns: [nameColumn], rows: [['DB1'], ['DB2']] }
+        }
+      ],
+      'p1'
+    );
+    const fresh = await listDatabases(reopenId);
+    expect(fresh).toEqual(['DB1', 'DB2']);
+    expect(executed.filter((s) => s === 'SHOW DATABASES')).toHaveLength(2);
   });
 });

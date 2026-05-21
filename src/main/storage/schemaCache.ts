@@ -132,3 +132,35 @@ export function invalidate(
   }
   return s.invalidateByProfileDbSchema.run(profileId, database, schema).changes;
 }
+
+/**
+ * Drop every cache row owned by a profile. Used by the session-close
+ * hook (T4 B1) so re-opening a session after the user has added or
+ * dropped objects in another tool shows fresh data rather than 5-min
+ * stale entries.
+ */
+export function invalidateByProfile(profileId: string): number {
+  return stmts(getDatabase()).invalidateByProfile.run(profileId).changes;
+}
+
+/**
+ * Drop every cache row for a profile + database pair, regardless of
+ * schema or object_type. Used by the user-facing Refresh action when a
+ * database node is right-clicked.
+ */
+export function invalidateByProfileDb(profileId: string, database: string): number {
+  return stmts(getDatabase()).invalidateByProfileDb.run(profileId, database).changes;
+}
+
+/**
+ * Drop every cache row for a profile + database + schema triple. `null`
+ * matches only NULL-schema rows; pass the schema name for the common
+ * "refresh this schema's tables/views" path.
+ */
+export function invalidateByProfileDbSchema(
+  profileId: string,
+  database: string,
+  schema: string | null
+): number {
+  return stmts(getDatabase()).invalidateByProfileDbSchema.run(profileId, database, schema).changes;
+}
