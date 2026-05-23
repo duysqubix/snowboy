@@ -2,6 +2,32 @@
 
 Parent plan: [`.sisyphus/plans/snowboy-mvp-v0.1.md`](snowboy-mvp-v0.1.md) §T4.1–T4.5.
 
+## Live progress (2026-05-20)
+
+**Phase 0 + Phase A: ✅ COMPLETE.** All 9 task commits + 4 polish commits pushed to `origin/main`. 273 unit tests passing. e2e smoke green. typecheck/lint clean.
+
+| Task | Status | Commit |
+|---|---|---|
+| Phase 0 contract patch | ✅ | `7e9f68d` |
+| T4.5a keymap registry | ✅ | `bddf4f5` |
+| exportCsv hardening | ✅ | `b2db5c4` |
+| T4.2 worksheet persistence | ✅ | `27cc634` |
+| T4.3a settings storage | ✅ | `1889437` |
+| T4.4a theme bridge + FOUC | ✅ | `0233de1` |
+| T4.1 layout persistence + close flush | ✅ | `da9134e` |
+| B1 schema cache + Refresh | ✅ | `692d33a` |
+| B3 live session context | ✅ | `bee02ed` |
+| smoke WSL fix | ✅ | `a1e7faa` |
+| mirror bug fix | ✅ | `151ca1f` |
+| dropdowns + keymap remap | ✅ | `d4a1b80` |
+| Ctrl+W fix | ✅ | `630b4ab` |
+
+**Next: Phase B** (T4.3b dialog, T4.4b CodeMirror compartment, T4.5b Cmd+Enter run-at-cursor, T4.5c help modal, Recently-Closed recovery). Also still pending: B2 virtualized grid.
+
+Detailed handoff at [`.sisyphus/plans/snowboy-handoff-2026-05-20.md`](snowboy-handoff-2026-05-20.md).
+
+---
+
 ## Revision history
 
 **v1 (REJECTED)** — initial plan; 60+ findings from 5-agent hyperplan adversarial review (reactivity / data-correctness / concurrency / UX / scope critics). Failed because:

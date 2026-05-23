@@ -21,7 +21,7 @@ The v0.1 MVP must deliver a single-account Snowflake IDE that fixes the user's p
 | Wave 1 — foundation | ✅ Complete | `8154ca2` | T1.1 typed IPC, T1.2 safeStorage, T1.3 SQLite + 5-table schema + migrations, T1.4 Snowflake driver (Session + Pool + 3 auth flows + streaming), T1.5+T1.6 shadcn-svelte v2 (13 components) + app shell. Wall-clock ~25 min via 5 parallel sub-agents. |
 | Wave 2 — UI components | ✅ Complete | `cbb5954` | 8 tasks T2.1–T2.8 delivered via parallel sub-agents (Bucket D recovered manually after agent failure). |
 | Wave 3 — wiring | ✅ Complete | `db2cb83` | 7 tasks T3.1–T3.7 + significant post-Wave-3 polish chain (see notes below). Real Snowflake round-trip working end-to-end with PAT auth: profiles → sessions → query.run → tabbed multi-statement results → Object Browser tree → DDL viewer. |
-| **Wave 4 — persistence & polish** | ⏳ **Next** | — | 5 tasks (T4.1–T4.5) |
+| **Wave 4 — persistence & polish** | 🟡 **Phase A complete, Phase B pending** | `630b4ab` | Phase 0 + Phase A (T4.1, T4.2, T4.3a, T4.4a, T4.5a, exportCsv, B1, B3) all landed + 4 polish commits. 273 tests passing. Phase B (T4.3b dialog, T4.4b CodeMirror compartment, T4.5b Cmd+Enter, T4.5c help modal, Recently-Closed) + B2 virtualized grid still pending. See [`snowboy-wave4.md`](snowboy-wave4.md) + [`snowboy-handoff-2026-05-20.md`](snowboy-handoff-2026-05-20.md). |
 | Wave 5 — packaging & release | ⏳ Pending | — | 5 tasks (T5.1–T5.5) |
 
 **Post-Wave 3 polish chain** (between `d9651ef` and `db2cb83`, ~20 commits):
