@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { EditorState, StateEffect } from '@codemirror/state';
+  import { Compartment, EditorState } from '@codemirror/state';
   import {
     EditorView,
     keymap,
@@ -19,11 +19,11 @@
   import { snowflakeDialect } from './snowflakeDialect';
   import { snowboyLightTheme, snowboyDarkTheme } from './theme';
   import { snowflakeKeywords, snowflakeBuiltins, snowflakeTypes } from './snowflakeKeywords';
+  import { theme as themeStore } from '../stores/theme.svelte';
 
   export type SqlEditorProps = {
     value: string;
     onChange?: (v: string) => void;
-    theme?: 'light' | 'dark';
     readOnly?: boolean;
     placeholder?: string;
     initialCursorLine?: number | null;
@@ -36,7 +36,6 @@
   let {
     value = $bindable(''),
     onChange,
-    theme = 'light',
     readOnly = false,
     placeholder = '-- Write SQL here, then Run or press Ctrl+Enter',
     initialCursorLine = null,
@@ -49,6 +48,19 @@
   let editorContainer: HTMLDivElement;
   let view: EditorView;
   let scrollListenerCleanup: (() => void) | null = null;
+
+  // Compartments let us live-swap individual extensions (theme, readOnly,
+  // placeholder) via `dispatch({ effects: compartment.reconfigure(...) })`
+  // WITHOUT replacing the whole extension set. A broad `StateEffect.reconfigure`
+  // would rebuild every extension's state and silently lose history /
+  // autocomplete / cursor / scroll. See hyperplan reactivity-critic #9.
+  const themeCompartment = new Compartment();
+  const readOnlyCompartment = new Compartment();
+  const placeholderCompartment = new Compartment();
+
+  function themeExtensionFor(effective: 'light' | 'dark') {
+    return effective === 'dark' ? snowboyDarkTheme : snowboyLightTheme;
+  }
 
   function snowflakeCompletionSource(context: CompletionContext) {
     let word = context.matchBefore(/\w*/);
@@ -79,11 +91,11 @@
       highlightActiveLine(),
       highlightSelectionMatches(),
       lintGutter(),
-      placeholderExt(placeholder),
+      placeholderCompartment.of(placeholderExt(placeholder)),
       keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap]),
       snowflakeDialect.extension,
-      theme === 'dark' ? snowboyDarkTheme : snowboyLightTheme,
-      EditorState.readOnly.of(readOnly),
+      themeCompartment.of(themeExtensionFor(themeStore.effective)),
+      readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const newValue = update.state.doc.toString();
@@ -157,15 +169,32 @@
     }
   });
 
+  // Live-swap theme via the theme store. Reading `themeStore.effective`
+  // registers the effect as a subscriber; on OS / settings flip the store
+  // re-emits and we surgically reconfigure ONLY the theme compartment —
+  // cursor, scroll, history, and autocomplete state are preserved.
   $effect(() => {
-    void theme;
-    void readOnly;
-    void placeholder;
-    if (view) {
-      view.dispatch({
-        effects: StateEffect.reconfigure.of(buildExtensions())
-      });
-    }
+    const effective = themeStore.effective;
+    if (!view) return;
+    view.dispatch({
+      effects: themeCompartment.reconfigure(themeExtensionFor(effective))
+    });
+  });
+
+  $effect(() => {
+    const ro = readOnly;
+    if (!view) return;
+    view.dispatch({
+      effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(ro))
+    });
+  });
+
+  $effect(() => {
+    const ph = placeholder;
+    if (!view) return;
+    view.dispatch({
+      effects: placeholderCompartment.reconfigure(placeholderExt(ph))
+    });
   });
 </script>
 

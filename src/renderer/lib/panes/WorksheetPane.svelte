@@ -197,14 +197,6 @@
   );
   let canCancel = $derived(activeQueryState?.status === 'running');
 
-  let editorTheme = $state<'light' | 'dark'>('dark');
-  onMount(() => {
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      const mq = window.matchMedia('(prefers-color-scheme: dark)');
-      editorTheme = mq.matches ? 'dark' : 'light';
-    }
-  });
-
   function handlePaneClick(): void {
     panes.setActive(paneId);
   }
@@ -481,7 +473,6 @@
     {#if paneState.hydrated}
       <SqlEditor
         value={paneState.body}
-        theme={editorTheme}
         initialCursorLine={paneState.cursorLine}
         initialCursorCol={paneState.cursorCol}
         initialScrollTop={paneState.scrollTop}
