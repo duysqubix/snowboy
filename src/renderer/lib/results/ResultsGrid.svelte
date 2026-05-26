@@ -1,8 +1,13 @@
 <script lang="ts">
   import { LoaderCircle, Download } from 'lucide-svelte';
+  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
+  import { createVirtualizer } from '@tanstack/svelte-virtual';
+  import { toast } from 'svelte-sonner';
   import { classifyType, formatCell, type SnowflakeColumnKind } from './columnTypes';
   import { exportCsv } from './exportCsv';
+  import { getRowHeight, parseMultilineCell } from './gridHelpers';
+  import { settings } from '$lib/stores/settings.svelte';
   import CellDetailPanel from './CellDetailPanel.svelte';
 
   type Column = {
@@ -53,6 +58,26 @@
     })
   );
 
+  let rowHeight = $derived(getRowHeight(settings.current.fontSize));
+
+  let scrollEl: HTMLDivElement | undefined = $state();
+
+  const virtualizerStore = createVirtualizer<HTMLDivElement, HTMLTableRowElement>({
+    count: untrack(() => rows.length),
+    getScrollElement: () => scrollEl ?? null,
+    estimateSize: () => rowHeight,
+    overscan: 8
+  });
+
+  $effect(() => {
+    $virtualizerStore.setOptions({
+      count: rows.length,
+      getScrollElement: () => scrollEl ?? null,
+      estimateSize: () => rowHeight,
+      overscan: 8
+    });
+  });
+
   function handleRowClick(e: MouseEvent, index: number) {
     if (e.shiftKey && lastSelectedRowIndex !== null) {
       const start = Math.min(lastSelectedRowIndex, index);
@@ -71,6 +96,12 @@
     lastSelectedRowIndex = index;
   }
 
+  function openDetail(colName: string, value: unknown) {
+    detailColumnName = colName;
+    detailValue = value;
+    detailPanelOpen = true;
+  }
+
   function handleCellClick(
     e: MouseEvent,
     colName: string,
@@ -79,9 +110,7 @@
   ) {
     if (isExpandable) {
       e.stopPropagation();
-      detailColumnName = colName;
-      detailValue = value;
-      detailPanelOpen = true;
+      openDetail(colName, value);
     }
   }
 
@@ -109,6 +138,10 @@
   }
 
   function handleExportCsv() {
+    if (loading) {
+      toast.warning('Export available after query completes');
+      return;
+    }
     const csv = exportCsv(columns, rows);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -119,6 +152,7 @@
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 </script>
 
@@ -132,9 +166,10 @@
       {/if}
     </div>
     <button
-      class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+      class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       onclick={handleExportCsv}
       disabled={rows.length === 0 || loading}
+      title={loading ? 'Export available after query completes' : 'Download all rows as CSV'}
     >
       <Download class="w-4 h-4" />
       Download CSV
@@ -151,7 +186,7 @@
       </div>
     {/if}
 
-    {#if loading}
+    {#if loading && rows.length === 0}
       <div class="absolute inset-0 flex items-center justify-center z-10 bg-background/50 backdrop-blur-sm">
         <LoaderCircle class="w-8 h-8 animate-spin text-primary" />
       </div>
@@ -163,14 +198,17 @@
       </div>
     {/if}
 
-    <div class="w-full h-full overflow-auto">
-      <table class="w-full border-collapse table-fixed">
-        <thead class="sticky top-0 z-20 bg-muted shadow-sm">
-          <tr>
+    <div bind:this={scrollEl} class="w-full h-full overflow-auto">
+      <table class="border-collapse" style:display="grid">
+        <thead class="sticky top-0 z-20 bg-muted shadow-sm" style:display="grid">
+          <tr style:display="flex" style:width="100%">
             {#each resolved as col (col.name)}
               <th
                 class="p-2 border-b border-r border-border text-xs font-semibold text-muted-foreground select-none whitespace-nowrap overflow-hidden text-ellipsis"
-                style="width: {col.width}px; text-align: {col.isNumeric ? 'right' : 'left'}"
+                style:display="flex"
+                style:flex-shrink="0"
+                style:width="{col.width}px"
+                style:justify-content={col.isNumeric ? 'flex-end' : 'flex-start'}
               >
                 {col.name}
               </th>
@@ -178,38 +216,78 @@
           </tr>
         </thead>
 
-        <tbody>
-          {#each rows as row, rowIndex (rowIndex)}
-            {@const isSelected = selectedRowIndices.has(rowIndex)}
-            <tr
-              class="border-b border-border hover:bg-muted/50 cursor-pointer transition-colors {isSelected ? 'bg-accent hover:bg-accent/80' : ''}"
-              onclick={(e) => handleRowClick(e, rowIndex)}
-            >
-              {#each resolved as col (col.name)}
-                {@const val = row[col.name]}
-                {@const cell = formatCell(val, col.kind)}
-                {@const isNull = val === null || val === undefined}
-                {@const isBoolean = col.kind === 'boolean'}
-                <td
-                  class="p-2 border-r border-border text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                  style="width: {col.width}px; text-align: {col.isNumeric ? 'right' : 'left'}"
-                  title={!cell.isExpandable ? cell.display : undefined}
-                >
-                  {#if cell.isExpandable}
-                    <button
-                      class="text-primary hover:underline text-left w-full truncate"
-                      onclick={(e) => handleCellClick(e, col.name, val, true)}
-                    >
-                      {cell.display}
-                    </button>
-                  {:else}
-                    <span class={isNull || isBoolean ? 'text-muted-foreground' : 'text-foreground'} class:italic={isNull}>
-                      {cell.display}
-                    </span>
-                  {/if}
-                </td>
-              {/each}
-            </tr>
+        <tbody
+          style:display="grid"
+          style:position="relative"
+          style:height="{$virtualizerStore.getTotalSize()}px"
+        >
+          {#each $virtualizerStore.getVirtualItems() as v (v.key)}
+            {@const rowIndex = v.index}
+            {@const row = rows[rowIndex]}
+            {#if row !== undefined}
+              {@const isSelected = selectedRowIndices.has(rowIndex)}
+              <tr
+                data-index={rowIndex}
+                class="border-b border-border hover:bg-muted/50 cursor-pointer transition-colors {isSelected ? 'bg-accent hover:bg-accent/80' : ''}"
+                style:display="flex"
+                style:position="absolute"
+                style:top="0"
+                style:left="0"
+                style:width="100%"
+                style:transform="translateY({v.start}px)"
+                style:height="{rowHeight}px"
+                onclick={(e) => handleRowClick(e, rowIndex)}
+              >
+                {#each resolved as col (col.name)}
+                  {@const val = row[col.name]}
+                  {@const cell = formatCell(val, col.kind)}
+                  {@const ml = parseMultilineCell(val)}
+                  {@const isNull = val === null || val === undefined}
+                  {@const isBoolean = col.kind === 'boolean'}
+                  {@const isExpandable = cell.isExpandable || ml.isMultiline}
+                  <td
+                    class="px-2 border-r border-border text-sm whitespace-nowrap overflow-hidden text-ellipsis"
+                    style:display="flex"
+                    style:flex-shrink="0"
+                    style:align-items="center"
+                    style:width="{col.width}px"
+                    style:height="{rowHeight}px"
+                    style:justify-content={col.isNumeric ? 'flex-end' : 'flex-start'}
+                    title={!isExpandable ? cell.display : undefined}
+                  >
+                    {#if ml.isMultiline}
+                      <button
+                        type="button"
+                        class="text-left w-full truncate flex items-center gap-2"
+                        onclick={(e) => handleCellClick(e, col.name, val, true)}
+                      >
+                        <span class="truncate text-foreground">{ml.firstLine}</span>
+                        <span
+                          class="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                        >
+                          +{ml.extraLines} more {ml.extraLines === 1 ? 'line' : 'lines'}
+                        </span>
+                      </button>
+                    {:else if cell.isExpandable}
+                      <button
+                        type="button"
+                        class="text-primary hover:underline text-left w-full truncate"
+                        onclick={(e) => handleCellClick(e, col.name, val, true)}
+                      >
+                        {cell.display}
+                      </button>
+                    {:else}
+                      <span
+                        class="truncate {isNull || isBoolean ? 'text-muted-foreground' : 'text-foreground'}"
+                        class:italic={isNull}
+                      >
+                        {cell.display}
+                      </span>
+                    {/if}
+                  </td>
+                {/each}
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>
