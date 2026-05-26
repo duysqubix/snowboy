@@ -1,4 +1,28 @@
 /* eslint-disable */
+import { plugin } from 'bun';
+import { compile } from 'svelte/compiler';
+import { readFileSync } from 'fs';
+
+plugin({
+  name: 'svelte-loader',
+  setup(build) {
+    build.onLoad({ filter: /\.svelte$/ }, (args) => {
+      let source = readFileSync(args.path, 'utf8');
+      source = source.replace(/import .* from '\$lib\/components\/ui\/.*';/g, '');
+      source = source.replace(/import .* from '\.\.\/.*\.svelte';/g, '');
+      const { js } = compile(source, {
+        filename: args.path,
+        generate: 'client',
+        runes: true
+      });
+      return {
+        contents: js.code,
+        loader: 'js'
+      };
+    });
+  }
+});
+
 (globalThis as any).$state = (v: any) => v;
 (globalThis as any).$derived = (v: any) => v;
 (globalThis as any).$effect = (v: any) => v;
@@ -36,6 +60,24 @@ class MockEventTarget {
 }
 
 (globalThis as any).window = new MockEventTarget();
+(globalThis as any).window.snowboy = {
+  settings: {
+    onChanged: () => () => {},
+    set: async (p: any) => p
+  },
+  theme: {
+    onChanged: () => () => {},
+    get: async () => 'light'
+  },
+  workspace: {
+    saveLayout: async () => {},
+    loadLayout: async () => null,
+    flushAck: async () => {}
+  },
+  workspaceEvents: {
+    onRequestFlush: () => () => {}
+  }
+};
 (globalThis as any).document = {
   body: new MockEventTarget(),
   documentElement: {

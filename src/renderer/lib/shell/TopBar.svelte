@@ -1,15 +1,17 @@
 <script lang="ts">
   import * as Select from '$lib/components/ui/select';
   import { Button } from '$lib/components/ui/button';
-  import { History, Plug } from 'lucide-svelte';
+  import { History, Plug, Settings } from 'lucide-svelte';
   import { profiles } from '$lib/stores/profiles.svelte';
 
   let {
     onOpenConnections,
-    onToggleHistory
+    onToggleHistory,
+    onOpenSettings
   }: {
     onOpenConnections: () => void;
     onToggleHistory: () => void;
+    onOpenSettings: () => void;
   } = $props();
 
   let activeProfileId = $derived(profiles.activeProfileId ?? '');
@@ -36,6 +38,15 @@
   </div>
 
   <div class="ml-2 flex shrink-0 items-center gap-2">
+    <Button
+      variant="ghost"
+      size="sm"
+      class="h-8"
+      title="Settings (Ctrl+,)"
+      onclick={onOpenSettings}
+    >
+      <Settings class="h-4 w-4" />
+    </Button>
     <Button
       variant="ghost"
       size="sm"

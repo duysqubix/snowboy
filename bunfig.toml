@@ -1,4 +1,6 @@
 [install]
-# Required for @electron/rebuild compatibility in T0.2 — isolated breaks native module discovery.
 linker = "hoisted"
 save-text-lockfile = true
+
+[test]
+# conditions = ["browser"]
