@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { LayoutTree, LayoutTreeSerialized } from '../../../main/types';
 import { getPaneState } from '../panes/paneStore.svelte';
+import { recentlyClosed } from './recentlyClosed.svelte';
 
 export function createPaneTree() {
   const initialPaneId = nanoid();
@@ -52,6 +53,30 @@ export function createPaneTree() {
       worksheetId: newWorksheetId
     };
 
+    insertLeaf(found, newLeaf, direction);
+  }
+
+  function addPaneWithWorksheet(worksheetId: string) {
+    if (!activePaneId) return;
+
+    const found = findLeaf(tree, activePaneId);
+    if (!found) return;
+
+    const newPaneId = nanoid();
+    const newLeaf: LayoutTree = {
+      kind: 'leaf',
+      paneId: newPaneId,
+      worksheetId
+    };
+
+    insertLeaf(found, newLeaf, 'v');
+  }
+
+  function insertLeaf(
+    found: { leaf: Extract<LayoutTree, { kind: 'leaf' }>; parent: Extract<LayoutTree, { kind: 'split' }> | null; index: number },
+    newLeaf: Extract<LayoutTree, { kind: 'leaf' }>,
+    direction: 'h' | 'v'
+  ) {
     if (!found.parent) {
       tree = {
         kind: 'split',
@@ -78,7 +103,7 @@ export function createPaneTree() {
         found.parent.children[found.index] = nestedSplit;
       }
     }
-    activePaneId = newPaneId;
+    activePaneId = newLeaf.paneId;
     bump();
   }
 
@@ -87,6 +112,15 @@ export function createPaneTree() {
 
     const found = findLeaf(tree, activePaneId);
     if (!found) return;
+
+    const state = getPaneState(activePaneId);
+    if (state && state.body.trim().length > 0) {
+      recentlyClosed.push({
+        worksheetId: state.worksheetId,
+        title: state.title,
+        closedAt: Date.now()
+      });
+    }
 
     if (!found.parent) {
       const newPaneId = nanoid();
@@ -263,6 +297,7 @@ export function createPaneTree() {
     get activePaneId() { return activePaneId; },
     get version() { return version; },
     splitActive,
+    addPaneWithWorksheet,
     closeActive,
     setActive,
     setActivePaneSql,

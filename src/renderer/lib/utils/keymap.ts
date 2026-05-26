@@ -1,4 +1,5 @@
 import { panes as panesSingleton, type PaneTreeStore } from '../stores/panes.svelte';
+import { recentlyClosed } from '../stores/recentlyClosed.svelte';
 
 export type ShortcutScope =
   | 'global-allow-editor'   // fires everywhere (e.g. cmd+\)
@@ -146,6 +147,16 @@ export function installKeymap(paneStore: PaneTreeStore = panesSingleton): () => 
       handler: (e) => {
         e.preventDefault();
         paneStore.closeActive();
+      }
+    }),
+    registerShortcut({
+      id: 'pane.recently-closed',
+      combo: { cmdOrCtrl: true, shift: true, code: 'KeyT' },
+      scope: 'global-allow-editor',
+      description: 'Recently closed panes',
+      handler: (e) => {
+        e.preventDefault();
+        recentlyClosed.menuOpen = true;
       }
     })
   ];

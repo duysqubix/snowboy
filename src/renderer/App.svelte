@@ -11,12 +11,16 @@
   import PaneTree from '$lib/panes/PaneTree.svelte';
   import ConnectionDialog from '$lib/connections/ConnectionDialog.svelte';
   import MfaPromptDialog from '$lib/connections/MfaPromptDialog.svelte';
+  import SettingsDialog from '$lib/settings/SettingsDialog.svelte';
+  import RecentlyClosedMenu from '$lib/shell/RecentlyClosedMenu.svelte';
 
   import { tabs, installTabsKeymap } from '$lib/stores/tabs.svelte';
   import { panes as panesSingleton, type PaneTreeStore } from '$lib/stores/panes.svelte';
-  import { installKeymap } from '$lib/utils/keymap';
+  import { recentlyClosed } from '$lib/stores/recentlyClosed.svelte';
+  import { installKeymap, registerShortcut } from '$lib/utils/keymap';
   import { profiles } from '$lib/stores/profiles.svelte';
   import { sessions } from '$lib/stores/sessions.svelte';
+  import { dialogs } from '$lib/stores/dialogs.svelte';
   import { snowboy } from '$lib/ipc/client';
   import { debounce } from '$lib/utils/debounce';
 
@@ -69,6 +73,12 @@
     }, 0);
   }
 
+  function openSettings(): void {
+    setTimeout(() => {
+      dialogs.settingsOpen = true;
+    }, 0);
+  }
+
   function toggleHistory(): void {
     historyOpen = !historyOpen;
   }
@@ -84,6 +94,19 @@
     const cleanups: Array<() => void> = [];
 
     cleanups.push(installTabsKeymap(tabs));
+
+    cleanups.push(
+      registerShortcut({
+        id: 'app.settings',
+        combo: { cmdOrCtrl: true, code: 'Comma' },
+        scope: 'global-allow-editor',
+        description: 'Open Settings',
+        handler: (e) => {
+          e.preventDefault();
+          openSettings();
+        }
+      })
+    );
 
     void (async () => {
       try {
@@ -139,6 +162,7 @@
   <TopBar
     onOpenConnections={openConnections}
     onToggleHistory={toggleHistory}
+    onOpenSettings={openSettings}
   />
 
   <TabBar />
@@ -167,22 +191,32 @@
   <ConnectionDialog
     open={connectionsOpen}
     onOpenChange={(v) => (connectionsOpen = v)}
-    onConnect={(p) => {
-      profiles.setActive(p.id);
-      toast.success(`Connected to ${p.name}`);
-    }}
+  />
+
+  <SettingsDialog
+    open={dialogs.settingsOpen}
+    onOpenChange={(v) => (dialogs.settingsOpen = v)}
   />
 
   <MfaPromptDialog
     open={mfaOpen}
     profileName={mfaProfileName}
     onOpenChange={handleMfaOpenChange}
-    onSubmit={(code) => {
-      void handleMfaSubmit(code);
-    }}
+    onSubmit={handleMfaSubmit}
   />
 
-  <Toaster richColors position="bottom-right" />
+  <RecentlyClosedMenu
+    open={recentlyClosed.menuOpen}
+    onOpenChange={(v) => (recentlyClosed.menuOpen = v)}
+    onPick={(entry) => {
+      const popped = recentlyClosed.pop(entry.worksheetId);
+      if (popped) {
+        const store = tabs.active?.paneTree ?? panesSingleton;
+        store.addPaneWithWorksheet(popped.worksheetId);
+      }
+    }}
+  />
+  <Toaster />
 </div>
 
 <style>
