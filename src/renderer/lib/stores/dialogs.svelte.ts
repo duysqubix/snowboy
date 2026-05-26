@@ -1,3 +1,4 @@
 export const dialogs = $state({
-  settingsOpen: false
+  settingsOpen: false,
+  shortcutsOpen: false
 });

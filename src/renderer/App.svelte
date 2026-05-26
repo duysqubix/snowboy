@@ -12,6 +12,7 @@
   import ConnectionDialog from '$lib/connections/ConnectionDialog.svelte';
   import MfaPromptDialog from '$lib/connections/MfaPromptDialog.svelte';
   import SettingsDialog from '$lib/settings/SettingsDialog.svelte';
+  import ShortcutsModal from '$lib/help/ShortcutsModal.svelte';
   import RecentlyClosedMenu from '$lib/shell/RecentlyClosedMenu.svelte';
 
   import { tabs, installTabsKeymap } from '$lib/stores/tabs.svelte';
@@ -79,6 +80,13 @@
     }, 0);
   }
 
+  function openShortcuts(): void {
+    if (dialogs.settingsOpen) return;
+    setTimeout(() => {
+      dialogs.shortcutsOpen = true;
+    }, 0);
+  }
+
   function toggleHistory(): void {
     historyOpen = !historyOpen;
   }
@@ -104,6 +112,18 @@
         handler: (e) => {
           e.preventDefault();
           openSettings();
+        }
+      })
+    );
+    cleanups.push(
+      registerShortcut({
+        id: 'app.shortcuts',
+        combo: { cmdOrCtrl: true, code: 'Slash' },
+        scope: 'global-allow-editor',
+        description: 'Show keyboard shortcuts',
+        handler: (e) => {
+          e.preventDefault();
+          openShortcuts();
         }
       })
     );
@@ -187,6 +207,7 @@
     onOpenConnections={openConnections}
     onToggleHistory={toggleHistory}
     onOpenSettings={openSettings}
+    onOpenShortcuts={openShortcuts}
   />
 
   <TabBar />
@@ -220,6 +241,11 @@
   <SettingsDialog
     open={dialogs.settingsOpen}
     onOpenChange={(v) => (dialogs.settingsOpen = v)}
+  />
+
+  <ShortcutsModal
+    open={dialogs.shortcutsOpen}
+    onOpenChange={(v) => (dialogs.shortcutsOpen = v)}
   />
 
   <MfaPromptDialog

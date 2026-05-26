@@ -1,17 +1,19 @@
 <script lang="ts">
   import * as Select from '$lib/components/ui/select';
   import { Button } from '$lib/components/ui/button';
-  import { History, Plug, Settings } from 'lucide-svelte';
+  import { HelpCircle, History, Plug, Settings } from 'lucide-svelte';
   import { profiles } from '$lib/stores/profiles.svelte';
 
   let {
     onOpenConnections,
     onToggleHistory,
-    onOpenSettings
+    onOpenSettings,
+    onOpenShortcuts
   }: {
     onOpenConnections: () => void;
     onToggleHistory: () => void;
     onOpenSettings: () => void;
+    onOpenShortcuts: () => void;
   } = $props();
 
   let activeProfileId = $derived(profiles.activeProfileId ?? '');
@@ -46,6 +48,15 @@
       onclick={onOpenSettings}
     >
       <Settings class="h-4 w-4" />
+    </Button>
+    <Button
+      variant="ghost"
+      size="sm"
+      class="h-8"
+      title="Keyboard shortcuts (Ctrl+/)"
+      onclick={onOpenShortcuts}
+    >
+      <HelpCircle class="h-4 w-4" />
     </Button>
     <Button
       variant="ghost"
