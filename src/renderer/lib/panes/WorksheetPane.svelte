@@ -10,7 +10,8 @@
   import { cn } from '../utils';
   import * as Select from '../components/ui/select';
   import { Button } from '../components/ui/button';
-  import SqlEditor from '../editor/SqlEditor.svelte';
+  import SqlEditor, { type SqlEditorApi } from '../editor/SqlEditor.svelte';
+  import type { RunAtCursorPayload } from '../editor/runCommands';
   import { splitSql } from '../editor/splitSql';
   import ResultsTabs from '../results/ResultsTabs.svelte';
   import type { Worksheet } from '../../../main/types';
@@ -201,6 +202,8 @@
     panes.setActive(paneId);
   }
 
+  let editorApi: SqlEditorApi | null = $state(null);
+
   async function handleRun(): Promise<void> {
     const sessionId = sessions.activeSessionId;
     if (sessionId === null) {
@@ -237,6 +240,40 @@
         break;
       }
     }
+  }
+
+  async function handleRunAtCursor(payload: RunAtCursorPayload): Promise<void> {
+    const sessionId = sessions.activeSessionId;
+    if (sessionId === null) {
+      toast.error('No active session — open a connection first.');
+      return;
+    }
+    const trimmed = payload.statement.replace(/;\s*$/, '').trim();
+    if (trimmed.length === 0) {
+      toast.error('Empty statement at cursor.');
+      return;
+    }
+
+    editorApi?.flashStatement(payload.segmentStart, payload.segmentEnd);
+
+    paneState.currentQueryIds = [];
+    paneState.currentStatements = [trimmed];
+    paneState.activeResultIndex = 0;
+
+    try {
+      const queryId = await snowboy.query.run(sessionId, trimmed);
+      queries.register(queryId);
+      paneState.currentQueryIds = [queryId];
+      paneState.activeResultIndex = 0;
+      await queries.waitForCompletion(queryId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message);
+    }
+  }
+
+  function handleNoStatementAtCursor(): void {
+    toast.info('No statement at cursor — position cursor inside a SQL statement and try again.');
   }
 
   async function handleCancel(): Promise<void> {
@@ -472,6 +509,7 @@
   <div class="flex-1 border-b border-border min-h-0">
     {#if paneState.hydrated}
       <SqlEditor
+        bind:api={editorApi}
         value={paneState.body}
         initialCursorLine={paneState.cursorLine}
         initialCursorCol={paneState.cursorCol}
@@ -479,6 +517,9 @@
         onChange={handleEditorChange}
         onCursorChange={handleCursorChange}
         onScrollChange={handleScrollChange}
+        onRunAtCursor={handleRunAtCursor}
+        onNoStatementAtCursor={handleNoStatementAtCursor}
+        onRunAll={handleRun}
       />
     {/if}
   </div>

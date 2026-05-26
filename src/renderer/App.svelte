@@ -108,6 +108,30 @@
       })
     );
 
+    // Cmd/Ctrl+Enter and Cmd/Ctrl+Shift+Enter are registered with
+    // scope: 'editor-only' so they appear in the Shortcuts help modal
+    // (T4.5c). The window-level keydown listener IGNORES editor-only
+    // entries — actual firing is handled by CodeMirror's keymap extension
+    // inside SqlEditor.svelte. The handler is a no-op for the same reason.
+    cleanups.push(
+      registerShortcut({
+        id: 'editor.run-at-cursor',
+        combo: { cmdOrCtrl: true, code: 'Enter' },
+        scope: 'editor-only',
+        description: 'Run statement at cursor',
+        handler: () => {}
+      })
+    );
+    cleanups.push(
+      registerShortcut({
+        id: 'editor.run-all',
+        combo: { cmdOrCtrl: true, shift: true, code: 'Enter' },
+        scope: 'editor-only',
+        description: 'Run all statements',
+        handler: () => {}
+      })
+    );
+
     void (async () => {
       try {
         const saved = await snowboy.workspace.loadLayout();
