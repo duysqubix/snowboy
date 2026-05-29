@@ -1086,3 +1086,91 @@ bun test                 # bun unit tests (scoped to tests/unit/)
 bun run test:e2e         # playwright Electron smoke
 bun run rebuild          # explicit native-module rebuild (rarely needed)
 ```
+
+---
+
+## 15. IntelliSense (Wave 4.5)
+
+Context-aware SQL completion for the editor, shipped as a self-contained burst
+after Wave 4. Tagged standalone as `intellisense-v1`.
+
+### Scope (from grilling)
+
+The grilling session offered several scopes; **option C — context-aware
+completion** (schema-aware suggestions ranked by where the cursor is) was
+chosen. **Option D — full language-server-grade analysis** (alias/CTE
+resolution, signature help, snippet expansion) was **deferred to v0.2**. The
+v1 goal is a fast, correct dropdown that knows the current database/schema and
+the live object tree, not a full SQL semantic engine.
+
+### Sourcing strategy (E)
+
+Completion data is sourced **lazily, with three feeders into one cache**:
+
+1. Lazy fetch on cache miss — when the editor needs a completion path it does
+   not have, `completionFetcher.ensure()` dispatches the matching schema IPC
+   (`listDatabases` / `listSchemas` / `listObjects` / `getColumns`) and writes
+   the result back. In-flight requests for the same path are deduplicated.
+2. Session-open prefetch warmup — on session activation, `completionPrefetch`
+   warms `databases` and then each database's `schemas` so the first FROM is
+   instant. A token guard cancels warmup if the session switches mid-fetch.
+3. Object Browser writes — expanding nodes in the Object Browser mirrors the
+   fetched data into the same cache via `completionCacheSync`, so browsing a
+   table makes it immediately offerable in the editor.
+
+All three converge on a single synchronous renderer-side cache keyed by
+`(profileId, path)`, with an `onChange` listener the editor uses to
+reconfigure the CodeMirror schema source in place.
+
+### Ranking (B)
+
+**Concentric circles** — suggestions are boosted by proximity to the cursor's
+current context:
+
+- current schema's tables: hoisted to top level, **boost 2**
+- current database's other schemas: top level, **boost 1**
+- everything else (other databases, fully-qualified names): **boost 0**
+
+The fully-qualified tree is always present underneath so `db.schema.table.`
+paths still resolve; the boosts only reorder what surfaces first.
+
+### Five-module decomposition + commit SHAs
+
+| Part | Module | SHA |
+|------|--------|-----|
+| C1 | `src/renderer/lib/editor/completionCache.ts` — synchronous cache primitive | `8221f81` |
+| C2 | `src/renderer/lib/editor/completionFetcher.ts` — lazy-fetch IPC dispatcher + dedup | `367c129` |
+| C3 | `src/renderer/lib/editor/completionPrefetch.ts` — session-open warmup | `af942e1` |
+| C4 | `src/renderer/lib/editor/schemaCompletion.ts` + `SqlEditor.svelte` — context-aware source, ranking, spinner | `694e768` |
+| C5 | `src/renderer/lib/browser/completionCacheSync.ts` — Object Browser cache writes | `db30dce` |
+| fix | e2e WSL guard + removed an `as any` escape in the schema-completion test | `1f15134` |
+| C6 | integration smoke (`tests/unit/editor/intellisense.integration.test.ts`) + this doc + `intellisense-v1` tag | (this commit) |
+
+### Test count delta
+
+C6 added `tests/unit/editor/intellisense.integration.test.ts` (6 tests
+exercising the C1+C2+C4+C5 seams). Unit suite went from **386 → 392 passing**
+(1 skip, 0 fail), across **29 → 30 files**. The integration test verifies:
+cache miss to lazy fetch to populate to `onChange` fired; the `ObjectRef`
+shape C2 produces matches what C4/C5 expect; Object Browser writes land on the
+paths C4 reads back; concentric-circle ranking; and in-flight dedup plus
+cache-hit short-circuit.
+
+### Verification note (e2e)
+
+`typecheck`, `lint`, `test`, and `build` are green. The Playwright Electron
+e2e smoke (`bun run test:e2e`) is green only on the **canonical native-Windows
+dev box**; it cannot launch from inside WSL against a Windows-native Electron
+binary (Playwright cannot complete the DevTools handshake across the WSL ->
+Windows process boundary). Tracked as `snowboy-6xk`. C6 is an additive unit
+test and does not touch any bundled `src/` code, so it cannot affect e2e.
+
+### Known limitations (v0.2 candidates)
+
+- No alias/CTE awareness — `SELECT ... FROM orders o` does not teach `o.` the
+  columns of `orders`.
+- No recency weighting — boosts are purely structural (schema proximity), not
+  influenced by what the user recently typed or selected.
+- No snippet expansion — completions insert identifiers only, not templated
+  clauses.
+- No signature help — function/argument hints are not provided.
