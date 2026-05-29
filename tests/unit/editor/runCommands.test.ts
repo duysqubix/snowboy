@@ -101,9 +101,13 @@ describe('runAtCursorCommand', () => {
     expect(cmd(viewLikeFromState(state))).toBe(true);
   });
 
-  test('cursor at end of doc with no remaining stmt fires onNoStatementAtCursor', () => {
+  test('cursor at end of doc returns the last stmt (natural cursor position after typing)', () => {
+    let captured: RunAtCursorPayload | null = null;
     let noStmtCalled = false;
     const cmd = runAtCursorCommand({
+      onRunAtCursor: (p) => {
+        captured = p;
+      },
       onNoStatementAtCursor: () => {
         noStmtCalled = true;
       }
@@ -111,6 +115,23 @@ describe('runAtCursorCommand', () => {
 
     const sql = 'SELECT 1;';
     const state = withCursor(sql, 9);
+
+    expect(cmd(viewLikeFromState(state))).toBe(true);
+    expect(noStmtCalled).toBe(false);
+    expect(captured!.statement).toBe('SELECT 1;');
+    expect(captured!.offset).toBe(9);
+  });
+
+  test('cursor at end of doc inside trailing comment fires onNoStatementAtCursor', () => {
+    let noStmtCalled = false;
+    const cmd = runAtCursorCommand({
+      onNoStatementAtCursor: () => {
+        noStmtCalled = true;
+      }
+    });
+
+    const sql = 'SELECT 1;\n-- trailing';
+    const state = withCursor(sql, sql.length);
 
     expect(cmd(viewLikeFromState(state))).toBe(true);
     expect(noStmtCalled).toBe(true);

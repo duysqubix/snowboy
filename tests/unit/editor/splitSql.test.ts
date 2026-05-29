@@ -194,15 +194,39 @@ describe('statementAtOffset', () => {
     expect(statementAtOffset(sql, 999)).toBeNull();
   });
 
-  test('cursor just AFTER last statement\u2019s ; returns null (does not return previous)', () => {
+  test('cursor immediately after last statement\u2019s ; returns that statement (EOF natural cursor position)', () => {
     const sql = 'SELECT 1; SELECT 2;';
     expect(sql.length).toBe(19);
-    expect(statementAtOffset(sql, 19)).toBeNull();
+    const seg = statementAtOffset(sql, 19);
+    expect(seg).not.toBeNull();
+    expect(seg!.text).toBe('SELECT 2;');
   });
 
-  test('cursor inside trailing whitespace after last stmt returns null (no next)', () => {
+  test('cursor inside trailing whitespace after last stmt returns the previous stmt (no next stmt available)', () => {
     const sql = 'SELECT 1;   ';
-    expect(statementAtOffset(sql, 10)).toBeNull();
+    const seg = statementAtOffset(sql, 10);
+    expect(seg).not.toBeNull();
+    expect(seg!.text).toBe('SELECT 1;');
+  });
+
+  test('REGRESSION: single SELECT with cursor at EOF returns that statement (user-reported bug)', () => {
+    const sql = 'SELECT 1;';
+    const seg = statementAtOffset(sql, sql.length);
+    expect(seg).not.toBeNull();
+    expect(seg!.text).toBe('SELECT 1;');
+  });
+
+  test('REGRESSION: unterminated single statement with cursor at EOF returns that statement', () => {
+    const sql = 'SELECT 1';
+    const seg = statementAtOffset(sql, sql.length);
+    expect(seg).not.toBeNull();
+    expect(seg!.text).toBe('SELECT 1');
+  });
+
+  test('cursor at EOF inside trailing comment returns null', () => {
+    const sql = 'SELECT 1;\n-- trailing';
+    const seg = statementAtOffset(sql, sql.length);
+    expect(seg).toBeNull();
   });
 
   test('cursor at start of statement returns that statement', () => {

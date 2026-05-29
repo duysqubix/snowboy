@@ -302,9 +302,15 @@ function isCommentOnly(stmt: string): boolean {
  * Look up the statement segment containing a cursor offset.
  *
  *   - cursor inside a `stmt` segment       → that stmt
- *   - cursor inside a `ws` between stmts   → the NEXT stmt (Snowsight parity)
+ *   - cursor inside a `ws` segment         → next stmt (Snowsight parity);
+ *                                            falls back to previous stmt
+ *                                            if there is no next
  *   - cursor inside a `comment` segment    → null (caller should toast)
- *   - cursor at or past EOF                → null
+ *   - cursor at EOF (offset === length)    → last stmt segment (the natural
+ *                                            cursor position after typing
+ *                                            a query), null if the trailing
+ *                                            segment is a comment
+ *   - cursor at offset > length            → null
  *
  * Offsets are UTF-16 code unit indices (matching `EditorState.doc.length` /
  * `selection.main.head`). The `🚀` emoji is two UTF-16 units; offsets stay
@@ -320,15 +326,24 @@ export function statementAtOffset(input: string, offset: number): Segment | null
     if (offset >= seg.start && offset < seg.end) {
       if (seg.kind === 'stmt') return seg;
       if (seg.kind === 'comment') return null;
-      // ws → return the next stmt segment, if any.
       for (let j = i + 1; j < segments.length; j++) {
-        const candidate = segments[j]!;
-        if (candidate.kind === 'stmt') return candidate;
+        if (segments[j]!.kind === 'stmt') return segments[j]!;
+      }
+      for (let j = i - 1; j >= 0; j--) {
+        if (segments[j]!.kind === 'stmt') return segments[j]!;
       }
       return null;
     }
   }
 
+  // offset === input.length (cursor at EOF). Walk back to find the last
+  // stmt; if a trailing comment is encountered first the cursor sits in
+  // the trailing comment region and returns null.
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i]!;
+    if (seg.kind === 'stmt') return seg;
+    if (seg.kind === 'comment') return null;
+  }
   return null;
 }
 
