@@ -14,7 +14,14 @@
   } from '@codemirror/view';
   import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
   import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
-  import { autocompletion, completionKeymap, CompletionContext } from '@codemirror/autocomplete';
+  import { autocompletion, completionKeymap, CompletionContext, startCompletion } from '@codemirror/autocomplete';
+  import { schemaCompletionSource, type SQLNamespace } from '@codemirror/lang-sql';
+  import { completionCache } from './completionCacheSingleton';
+  import { createCompletionFetcher } from './completionFetcher';
+  import { getFetchPath, buildSchemaConfig } from './schemaCompletion';
+  import { snowboy } from '../ipc/client';
+  import { sessions } from '../stores/sessions.svelte';
+  import { profiles } from '../stores/profiles.svelte';
   import { lintGutter } from '@codemirror/lint';
   import { bracketMatching } from '@codemirror/language';
 
@@ -75,6 +82,8 @@
   const readOnlyCompartment = new Compartment();
   const placeholderCompartment = new Compartment();
   const keymapCompartment = new Compartment();
+  const schemaCompartment = new Compartment();
+  const fetcher = createCompletionFetcher(completionCache, snowboy);
 
   // The CM keymap is built once at mount and lives inside a compartment so
   // the *handler* callbacks must dispatch through a stable reference. We
@@ -160,7 +169,13 @@
     return effective === 'dark' ? snowboyDarkTheme : snowboyLightTheme;
   }
 
-  function snowflakeCompletionSource(context: CompletionContext) {
+  let isFetching = false;
+
+  
+
+  
+
+  function keywordSource(context: CompletionContext) {
     let word = context.matchBefore(/\w*/);
     if (!word || (word.from == word.to && !context.explicit)) return null;
 
@@ -177,6 +192,76 @@
     };
   }
 
+  function getSchemaAutocompletion() {
+    const profileId = profiles.activeProfileId;
+    const sessionId = sessions.activeSessionId;
+    const effective = sessionId ? sessions.effectiveContextFor(sessionId) : null;
+    const currentDb = effective?.database;
+    const currentSchema = effective?.schema;
+
+    let schemaConfig: SQLNamespace = {};
+    if (profileId) {
+      schemaConfig = buildSchemaConfig(profileId, currentDb, currentSchema, completionCache);
+    }
+
+    const underlying = schemaCompletionSource({ dialect: snowflakeDialect, schema: schemaConfig });
+
+    async function contextAwareSchemaSource(context: CompletionContext) {
+      if (!profileId || !sessionId) return null;
+
+      const match = context.matchBefore(/([a-zA-Z0-9_"]+\.)*[a-zA-Z0-9_"]*/);
+      if (match) {
+        const path = getFetchPath(match.text, currentDb, currentSchema, profileId, completionCache);
+        if (path) {
+          const promise = fetcher.ensure(sessionId, profileId, path);
+          if (completionCache.get(profileId, path) === null) {
+            isFetching = true;
+            promise.then(() => {
+              isFetching = false;
+              if (context.view) {
+                startCompletion(context.view);
+              }
+            });
+          }
+        }
+      }
+
+      const result = await underlying(context);
+
+      if (isFetching) {
+        const loadingOption = {
+          label: 'Loading...',
+          type: 'text',
+          boost: 999,
+          info: 'Fetching schema data...'
+        };
+        if (result) {
+          return {
+            ...result,
+            options: [loadingOption, ...result.options]
+          };
+        } else {
+          return {
+            from: context.pos,
+            options: [loadingOption]
+          };
+        }
+      }
+
+      return result;
+    }
+
+    return autocompletion({ override: [contextAwareSchemaSource, keywordSource] });
+  }
+
+  function rebuildSchemaCompartment() {
+    if (view) {
+      view.dispatch({
+        effects: schemaCompartment.reconfigure(getSchemaAutocompletion())
+      });
+    }
+  }
+
   function buildExtensions() {
     return [
       lineNumbers(),
@@ -185,7 +270,7 @@
       drawSelection(),
       EditorState.allowMultipleSelections.of(true),
       bracketMatching(),
-      autocompletion({ override: [snowflakeCompletionSource] }),
+      schemaCompartment.of(getSchemaAutocompletion()),
       highlightActiveLine(),
       highlightSelectionMatches(),
       lintGutter(),
@@ -217,7 +302,14 @@
     ];
   }
 
+  let unsubscribeCache: (() => void) | null = null;
+
   onMount(() => {
+    unsubscribeCache = completionCache.onChange((pid) => {
+      if (pid === profiles.activeProfileId) {
+        rebuildSchemaCompartment();
+      }
+    });
     const state = EditorState.create({
       doc: value,
       extensions: buildExtensions()
@@ -258,6 +350,7 @@
   });
 
   onDestroy(() => {
+    unsubscribeCache?.();
     if (highlightTimer !== null) {
       clearTimeout(highlightTimer);
       highlightTimer = null;
