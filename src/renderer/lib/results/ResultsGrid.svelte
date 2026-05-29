@@ -1,6 +1,7 @@
 <script lang="ts">
   import { LoaderCircle, Download } from 'lucide-svelte';
   import { untrack } from 'svelte';
+  import { get } from 'svelte/store';
   import { SvelteSet } from 'svelte/reactivity';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { toast } from 'svelte-sonner';
@@ -70,10 +71,12 @@
   });
 
   $effect(() => {
-    $virtualizerStore.setOptions({
-      count: rows.length,
+    const count = rows.length;
+    const h = rowHeight;
+    get(virtualizerStore).setOptions({
+      count,
       getScrollElement: () => scrollEl ?? null,
-      estimateSize: () => rowHeight,
+      estimateSize: () => h,
       overscan: 8
     });
   });
