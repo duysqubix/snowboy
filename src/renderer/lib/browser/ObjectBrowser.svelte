@@ -14,6 +14,13 @@
   import { tabs } from '../stores/tabs.svelte';
   import { snowboy } from '../ipc/client';
   import type { ObjectRef, SchemaObject, SessionId } from '../../../main/types';
+  import { completionCache } from '../editor/completionCacheSingleton';
+  import {
+    cacheColumns,
+    cacheDatabases,
+    cacheSchemas,
+    cacheTables
+  } from './completionCacheSync';
 
   import DdlDialog from './DdlDialog.svelte';
   import TreeNode from './TreeNode.svelte';
@@ -61,6 +68,10 @@
     rootError = null;
     try {
       const dbs = await snowboy.schema.listDatabases(sid);
+      const profileId = profiles.activeProfileId;
+      if (profileId !== null) {
+        cacheDatabases(completionCache, profileId, dbs);
+      }
       rootNodes = dbs.map((name) => ({
         id: `db:${name}`,
         name,
@@ -85,6 +96,10 @@
       case 'database': {
         const db = requireString(node.database, 'database');
         const names = await snowboy.schema.listSchemas(sid, db);
+        const profileId = profiles.activeProfileId;
+        if (profileId !== null) {
+          cacheSchemas(completionCache, profileId, db, names);
+        }
         return names.map((name) => ({
           id: `schema:${db}.${name}`,
           name,
@@ -98,6 +113,10 @@
         const db = requireString(node.database, 'database');
         const schema = requireString(node.schema, 'schema');
         const objects = await snowboy.schema.listObjects(sid, db, schema);
+        const profileId = profiles.activeProfileId;
+        if (profileId !== null) {
+          cacheTables(completionCache, profileId, db, schema, objects);
+        }
         return buildSchemaChildren(db, schema, objects);
       }
       case 'group': {
@@ -113,6 +132,10 @@
           name: node.name,
           kind: node.kind
         });
+        const profileId = profiles.activeProfileId;
+        if (profileId !== null) {
+          cacheColumns(completionCache, profileId, db, schema, node.name, cols);
+        }
         return cols.map((c) => ({
           id: `col:${db}.${schema}.${node.name}.${c.name}`,
           name: c.name,
@@ -316,6 +339,7 @@
     refreshing = true;
     try {
       await snowboy.schema.invalidate(profile.id);
+      completionCache.invalidate(profile.id);
       refreshCounter += 1;
       lastLoadedSessionId = null;
       await loadDatabases(sid);
