@@ -5,6 +5,7 @@
  * weaken or skip; every wave touching UI must keep this green.
  */
 import { test, expect, _electron as electron } from '@playwright/test';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,18 +13,29 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const projectRootRaw = resolve(here, '..', '..', '..');
 
 /**
- * WSL→Windows path bridge. Only applies when the LAUNCHER (this Node/Bun
- * process) is itself a Windows binary running under WSL bash — in that
- * case `process.cwd()` returns a `/mnt/c/...` path that Windows Electron's
- * require() resolver cannot understand, so we translate to `C:\...`.
+ * WSL→Windows path bridge. The Electron binary in `node_modules/electron/`
+ * is platform-specific: on this checkout it's Windows-native (.exe), so
+ * any `/mnt/c/...` path passed as `cwd` makes Windows Electron's require()
+ * fail with `Cannot find module '/mnt/c/...'` and pop a JS-error dialog
+ * before the test can even start.
  *
- * On Linux launchers (Linux-native Bun under WSL), the `/mnt/c/...` path
- * is the correct form — translating to `C:\...` would make Linux `chdir`
- * fail and the spawn would surface as `ENOENT`. So we skip translation
- * there. WSL Interop handles `.exe` spawn from the Linux side already.
+ * The naive guard `process.platform === 'win32'` is wrong: when WSL bash
+ * runs Node/Bun, `process.platform === 'linux'`, the guard skips, and we
+ * fall straight into the broken path. Detect the Windows Electron binary
+ * by looking for `electron.exe` in the resolved electron module dir;
+ * translate iff present. No-op on macOS/Linux-native Electron checkouts.
  */
+function detectWindowsElectron(): boolean {
+  try {
+    const electronDir = resolve(projectRootRaw, 'node_modules/electron/dist');
+    return existsSync(resolve(electronDir, 'electron.exe'));
+  } catch {
+    return false;
+  }
+}
+
 const projectRoot =
-  process.platform === 'win32' && projectRootRaw.startsWith('/mnt/')
+  projectRootRaw.startsWith('/mnt/') && detectWindowsElectron()
     ? projectRootRaw.replace(/^\/mnt\/([a-z])\//, (_m, drive: string) => `${drive.toUpperCase()}:\\`).replace(/\//g, '\\')
     : projectRootRaw;
 

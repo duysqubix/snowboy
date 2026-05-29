@@ -48,7 +48,7 @@ describe('schemaCompletion', () => {
       cache.set('profile1', ['schemas', 'db2'], ['schema3']);
       cache.set('profile1', ['tables', 'db2', 'schema3'], ['table3']);
 
-      const config = buildSchemaConfig('profile1', 'db1', 'schema1', cache) as any;
+      const config = buildSchemaConfig('profile1', 'db1', 'schema1', cache) as unknown as Record<string, { self: { boost: number } }>;
 
       // Current schema table should be at top level with boost 2
       expect(config['table1'].self.boost).toBe(2);
