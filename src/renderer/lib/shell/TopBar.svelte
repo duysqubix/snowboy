@@ -3,7 +3,6 @@
   import { Button } from '$lib/components/ui/button';
   import { HelpCircle, History, Plug, Settings } from 'lucide-svelte';
   import { profiles } from '$lib/stores/profiles.svelte';
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   import logoUrl from '../../../../assets/snowboy-logo.png?asset';
 
   let {
