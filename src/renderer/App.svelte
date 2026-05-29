@@ -24,8 +24,22 @@
   import { dialogs } from '$lib/stores/dialogs.svelte';
   import { snowboy } from '$lib/ipc/client';
   import { debounce } from '$lib/utils/debounce';
+  import { completionCache } from '$lib/editor/completionCacheSingleton';
+  import { createCompletionFetcher } from '$lib/editor/completionFetcher';
+  import { setupCompletionPrefetch } from '$lib/editor/completionPrefetch';
 
   let layoutRestored = $state(false);
+
+  const completionPrefetch = setupCompletionPrefetch({
+    cache: completionCache,
+    fetcher: createCompletionFetcher(completionCache, snowboy),
+    sessionsStore: sessions
+  });
+
+  $effect(() => {
+    void sessions.activeSessionId;
+    completionPrefetch.sync();
+  });
 
   const saveLayoutDebounced = debounce(() => {
     if (!layoutRestored) return;
@@ -101,6 +115,7 @@
   onMount(() => {
     const cleanups: Array<() => void> = [];
 
+    cleanups.push(completionPrefetch.dispose);
     cleanups.push(installTabsKeymap(tabs));
 
     cleanups.push(

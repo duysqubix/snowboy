@@ -52,6 +52,10 @@ class SessionsStore {
     return this.#byProfile.get(this.#activeProfileId)?.sessionId ?? null;
   }
 
+  get activeProfileId(): string | null {
+    return this.#activeProfileId;
+  }
+
   get status(): SessionStatus {
     return this.#status;
   }
