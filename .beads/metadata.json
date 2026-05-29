@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "snowboy",
+  "project_id": "d6406999-c4ad-4bd7-9e2c-2d5facf44834"
+}
