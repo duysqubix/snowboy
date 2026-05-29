@@ -248,27 +248,37 @@
       toast.error('No active session — open a connection first.');
       return;
     }
-    const trimmed = payload.statement.replace(/;\s*$/, '').trim();
-    if (trimmed.length === 0) {
-      toast.error('Empty statement at cursor.');
+
+    const trimmedStatements = payload.statements
+      .map((s) => s.text.replace(/;\s*$/, '').trim())
+      .filter((s) => s.length > 0);
+    if (trimmedStatements.length === 0) {
+      toast.error('Empty statement(s) selected.');
       return;
     }
 
-    editorApi?.flashStatement(payload.segmentStart, payload.segmentEnd);
+    const first = payload.statements[0]!;
+    const last = payload.statements[payload.statements.length - 1]!;
+    editorApi?.flashStatement(first.segmentStart, last.segmentEnd);
 
     paneState.currentQueryIds = [];
-    paneState.currentStatements = [trimmed];
+    paneState.currentStatements = trimmedStatements;
     paneState.activeResultIndex = 0;
 
-    try {
-      const queryId = await snowboy.query.run(sessionId, trimmed);
-      queries.register(queryId);
-      paneState.currentQueryIds = [queryId];
-      paneState.activeResultIndex = 0;
-      await queries.waitForCompletion(queryId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(message);
+    for (let i = 0; i < trimmedStatements.length; i++) {
+      const stmt = trimmedStatements[i]!;
+      try {
+        const queryId = await snowboy.query.run(sessionId, stmt);
+        queries.register(queryId);
+        paneState.currentQueryIds = [...paneState.currentQueryIds, queryId];
+        paneState.activeResultIndex = i;
+        await queries.waitForCompletion(queryId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const label = trimmedStatements.length > 1 ? `Statement ${i + 1} failed: ` : '';
+        toast.error(`${label}${message}`);
+        break;
+      }
     }
   }
 

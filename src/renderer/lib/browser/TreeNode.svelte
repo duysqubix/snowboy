@@ -112,44 +112,44 @@
     onclick={toggleExpand}
     oncontextmenu={handleContextMenu}
   >
-    <div class="w-4 h-4 mr-1 flex items-center justify-center">
+    <div class="w-4 h-4 mr-1 flex items-center justify-center shrink-0">
       {#if node.hasChildren}
         {#if loading}
           <div
-            class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"
+            class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0"
           ></div>
         {:else if error !== null}
           <button
             type="button"
-            class="p-0 m-0 bg-transparent border-none cursor-pointer"
+            class="p-0 m-0 bg-transparent border-none cursor-pointer shrink-0"
             title={`Error: ${error}. Click to retry.`}
             onclick={(e) => {
               e.stopPropagation();
               void retry();
             }}
           >
-            <AlertCircle class="w-4 h-4 text-destructive" />
+            <AlertCircle class="w-4 h-4 text-destructive shrink-0" />
           </button>
         {:else if expanded}
-          <ChevronDown class="w-4 h-4" />
+          <ChevronDown class="w-4 h-4 shrink-0" />
         {:else}
-          <ChevronRight class="w-4 h-4" />
+          <ChevronRight class="w-4 h-4 shrink-0" />
         {/if}
       {/if}
     </div>
 
     {#if node.kind !== 'profile'}
       <Icon
-        class="w-4 h-4 mr-2 {isGroup ? 'text-muted-foreground' : 'text-foreground'}"
+        class="w-4 h-4 mr-2 shrink-0 {isGroup ? 'text-muted-foreground' : 'text-foreground'}"
       />
     {/if}
 
-    <span class="truncate {isGroup ? 'text-muted-foreground' : ''}" title={node.comment ?? node.name}
+    <span class="truncate flex-1 min-w-0 {isGroup ? 'text-muted-foreground' : ''}" title={node.comment ?? node.name}
       >{node.name}</span
     >
 
     {#if node.kind === 'column' && node.dataType}
-      <span class="ml-2 text-xs text-muted-foreground"
+      <span class="ml-2 text-xs text-muted-foreground shrink-0"
         >{node.dataType}{node.nullable ? '' : ' NOT NULL'}</span
       >
     {/if}

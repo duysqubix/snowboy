@@ -1,11 +1,16 @@
 import type { EditorView } from '@codemirror/view';
-import { statementAtOffset } from './splitSql';
+import { splitSqlSegments, statementAtOffset } from './splitSql';
 
-export interface RunAtCursorPayload {
-  offset: number;
-  statement: string;
+export interface RunStatementSegment {
+  text: string;
   segmentStart: number;
   segmentEnd: number;
+}
+
+export interface RunAtCursorPayload {
+  selectionFrom: number;
+  selectionTo: number;
+  statements: RunStatementSegment[];
 }
 
 export interface RunCommandCallbacks {
@@ -20,18 +25,31 @@ export function runAtCursorCommand(
   callbacks: RunCommandCallbacks
 ): (view: ViewLike) => boolean {
   return (view) => {
-    const offset = view.state.selection.main.head;
+    const { from, to } = view.state.selection.main;
     const doc = view.state.doc.toString();
-    const seg = statementAtOffset(doc, offset);
-    if (seg === null) {
-      callbacks.onNoStatementAtCursor?.();
-      return true;
+
+    let statements: RunStatementSegment[];
+    if (from === to) {
+      const seg = statementAtOffset(doc, from);
+      if (seg === null) {
+        callbacks.onNoStatementAtCursor?.();
+        return true;
+      }
+      statements = [{ text: seg.text, segmentStart: seg.start, segmentEnd: seg.end }];
+    } else {
+      statements = splitSqlSegments(doc)
+        .filter((s) => s.kind === 'stmt' && s.start < to && s.end > from)
+        .map((s) => ({ text: s.text, segmentStart: s.start, segmentEnd: s.end }));
+      if (statements.length === 0) {
+        callbacks.onNoStatementAtCursor?.();
+        return true;
+      }
     }
+
     callbacks.onRunAtCursor?.({
-      offset,
-      statement: seg.text,
-      segmentStart: seg.start,
-      segmentEnd: seg.end
+      selectionFrom: from,
+      selectionTo: to,
+      statements
     });
     return true;
   };
