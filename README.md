@@ -34,6 +34,16 @@ A native Snowboy window should appear. Close it (or `Ctrl+C` in the terminal) to
 
 See [`.sisyphus/plans/snowboy-mvp-v0.1.md`](./.sisyphus/plans/snowboy-mvp-v0.1.md) for the full work plan.
 
+## Key bindings
+
+| Action | Windows/Linux | Mac |
+| --- | --- | --- |
+| Run statement at cursor | `Ctrl+Enter` | `Cmd+Enter` |
+| Run all statements | `Ctrl+Shift+Enter` | `Cmd+Shift+Enter` |
+| Open Settings | `Ctrl+,` | `Cmd+,` |
+| Show keyboard shortcuts | `Ctrl+/` | `Cmd+/` |
+| Query history | `Ctrl+H` | `Cmd+H` |
+
 ## License
 
 [MIT](./LICENSE).

@@ -18,7 +18,7 @@
   import { schemaCompletionSource, type SQLNamespace } from '@codemirror/lang-sql';
   import { completionCache } from './completionCacheSingleton';
   import { createCompletionFetcher } from './completionFetcher';
-  import { getFetchPath, buildSchemaConfig } from './schemaCompletion';
+  import { getFetchPath, buildSchemaConfig, withLoadingCompletion } from './schemaCompletion';
   import { snowboy } from '../ipc/client';
   import { sessions } from '../stores/sessions.svelte';
   import { profiles } from '../stores/profiles.svelte';
@@ -229,23 +229,7 @@
       const result = await underlying(context);
 
       if (isFetching) {
-        const loadingOption = {
-          label: 'Loading...',
-          type: 'text',
-          boost: 999,
-          info: 'Fetching schema data...'
-        };
-        if (result) {
-          return {
-            ...result,
-            options: [loadingOption, ...result.options]
-          };
-        } else {
-          return {
-            from: context.pos,
-            options: [loadingOption]
-          };
-        }
+        return withLoadingCompletion(result, context.pos);
       }
 
       return result;

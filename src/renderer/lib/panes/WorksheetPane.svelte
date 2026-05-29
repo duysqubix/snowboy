@@ -7,6 +7,7 @@
   import { sessions } from '../stores/sessions.svelte';
   import { queries } from '../stores/queries.svelte';
   import { snowboy } from '../ipc/client';
+  import { sharedSchemaCatalog } from '../editor/sharedSchemaCatalog';
   import { cn } from '../utils';
   import * as Select from '../components/ui/select';
   import { Button } from '../components/ui/button';
@@ -319,10 +320,13 @@
     lastFetchedSessionId = sid;
     void (async () => {
       try {
+        const profileId = profiles.activeProfileId;
         const [roles, warehouses, databases] = await Promise.all([
           snowboy.schema.listRoles(sid),
           snowboy.schema.listWarehouses(sid),
-          snowboy.schema.listDatabases(sid)
+          profileId === null
+            ? snowboy.schema.listDatabases(sid)
+            : sharedSchemaCatalog.ensureDatabases(sid, profileId)
         ]);
         if (sessions.activeSessionId !== sid) return;
         availableRoles = roles;
@@ -510,6 +514,7 @@
         class="h-7 text-xs"
         disabled={isRunning}
         onclick={handleRun}
+        title="Run all statements (Ctrl+Shift+Enter) / Run statement at cursor (Ctrl+Enter)"
       >
         Run
       </Button>

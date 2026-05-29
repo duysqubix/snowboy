@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createCompletionCache } from '../../../src/renderer/lib/editor/completionCache';
 import {
+  createSharedSchemaCatalog,
   setupCompletionPrefetch,
   type PrefetchSessionsStore
 } from '../../../src/renderer/lib/editor/completionPrefetch';
@@ -94,6 +95,23 @@ function dbCalls(calls: EnsureCall[]): EnsureCall[] {
 }
 
 describe('completionPrefetch', () => {
+  test('shared catalog dedupes concurrent database warmups', async () => {
+    const cache = createCompletionCache();
+    const { fetcher, calls, release } = makeFetcher(cache);
+    const catalog = createSharedSchemaCatalog(cache, fetcher);
+
+    const first = catalog.ensureDatabases(SID_A, PROFILE_A);
+    const second = catalog.ensureDatabases(SID_A, PROFILE_A);
+
+    expect(dbCalls(calls)).toHaveLength(1);
+
+    release(['databases']);
+
+    await expect(first).resolves.toEqual(DBS);
+    await expect(second).resolves.toEqual(DBS);
+    expect(dbCalls(calls)).toHaveLength(1);
+  });
+
   test('warms databases then schemas-per-database on activation', async () => {
     const cache = createCompletionCache();
     const { fetcher, calls, release } = makeFetcher(cache);

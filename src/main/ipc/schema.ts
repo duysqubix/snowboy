@@ -239,6 +239,33 @@ async function fetchObjectsOfKind(
   return out;
 }
 
+function isSnowflakeObjectDoesNotExistError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false;
+  const fields = err as { code?: unknown; sqlState?: unknown; message?: unknown };
+  if (fields.code === '002043' || fields.sqlState === '02000') return true;
+  return typeof fields.message === 'string' && fields.message.includes('Object does not exist');
+}
+
+async function fetchObjectsOfKindOrEmptyForMissingSchema(
+  session: Session,
+  database: string,
+  schema: string,
+  command: 'TABLES' | 'VIEWS',
+  kind: 'table' | 'view'
+): Promise<SchemaObject[]> {
+  try {
+    return await fetchObjectsOfKind(session, database, schema, command, kind);
+  } catch (err) {
+    if (isSnowflakeObjectDoesNotExistError(err)) {
+      console.warn(
+        `[schema] listObjects: ${database}.${schema} does not exist while fetching ${kind}s`
+      );
+      return [];
+    }
+    throw err;
+  }
+}
+
 async function fetchColumns(
   session: Session,
   obj: ObjectRef
@@ -367,10 +394,10 @@ export async function listObjects(
   const profileId = session.getProfileId();
   const [tables, views] = await Promise.all([
     getOrFetch<SchemaObject[]>(profileId, database, schema, 'table', () =>
-      fetchObjectsOfKind(session, database, schema, 'TABLES', 'table')
+      fetchObjectsOfKindOrEmptyForMissingSchema(session, database, schema, 'TABLES', 'table')
     ),
     getOrFetch<SchemaObject[]>(profileId, database, schema, 'view', () =>
-      fetchObjectsOfKind(session, database, schema, 'VIEWS', 'view')
+      fetchObjectsOfKindOrEmptyForMissingSchema(session, database, schema, 'VIEWS', 'view')
     )
   ]);
   return [...tables, ...views];

@@ -3,6 +3,8 @@
   import { Button } from '$lib/components/ui/button';
   import { HelpCircle, History, Plug, Settings } from 'lucide-svelte';
   import { profiles } from '$lib/stores/profiles.svelte';
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  import logoUrl from '../../../../assets/snowboy-logo.png?asset';
 
   let {
     onOpenConnections,
@@ -20,6 +22,7 @@
 </script>
 
 <div class="flex h-12 items-center px-4 border-b border-border bg-background shrink-0">
+  <img src={logoUrl} alt="Snowboy Logo" class="shrink-0 h-6 w-auto mr-2" />
   <h1 class="font-semibold text-lg mr-8">Snowboy</h1>
 
   <div class="flex min-w-0 flex-1 items-center gap-2">

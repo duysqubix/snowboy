@@ -1,5 +1,18 @@
 import type { SQLNamespace } from '@codemirror/lang-sql';
+import type { CompletionResult } from '@codemirror/autocomplete';
 import type { CompletionCache } from './completionCache';
+
+function firstCachedSchema(
+  profileId: string,
+  currentDb: string,
+  cache: CompletionCache
+): string | undefined {
+  return cache.get(profileId, ['schemas', currentDb])?.[0];
+}
+
+function isIdentifier(value: string): boolean {
+  return /^"(?:[^"]|"")+"$|^[a-zA-Z_][a-zA-Z0-9_$]*$/.test(value);
+}
 
 export function getFetchPath(
   text: string,
@@ -24,13 +37,16 @@ export function getFetchPath(
     if (currentDb) {
       const schemas = cache.get(profileId, ['schemas', currentDb]) || [];
       if (schemas.includes(p)) return ['tables', currentDb, p];
-      
+       
       if (currentSchema) {
         const tables = cache.get(profileId, ['tables', currentDb, currentSchema]) || [];
         if (tables.includes(p)) return ['columns', currentDb, currentSchema, p];
         
         return ['columns', currentDb, currentSchema, p];
       }
+
+      const fallbackSchema = firstCachedSchema(profileId, currentDb, cache);
+      if (fallbackSchema && isIdentifier(p)) return ['columns', currentDb, fallbackSchema, p];
     }
     return null;
   }
@@ -39,14 +55,18 @@ export function getFetchPath(
     const p1 = parts[0] as string;
     const p2 = parts[1] as string;
     const dbs = cache.get(profileId, ['databases']) || [];
-    if (dbs.includes(p1)) return ['tables', p1, p2];
+    if (dbs.includes(p1)) {
+      const schemas = cache.get(profileId, ['schemas', p1]) || [];
+      if (p2 === '' || schemas.includes(p2)) return ['tables', p1, p2];
+      return null;
+    }
     
     if (currentDb) {
       const schemas = cache.get(profileId, ['schemas', currentDb]) || [];
       if (schemas.includes(p1)) return ['columns', currentDb, p1, p2];
     }
     
-    return ['tables', p1, p2];
+    return null;
   }
   
   if (parts.length === 3) {
@@ -54,6 +74,30 @@ export function getFetchPath(
   }
   
   return null;
+}
+
+export function withLoadingCompletion(
+  result: CompletionResult | null,
+  from: number
+): CompletionResult {
+  const loadingOption = {
+    label: 'Loading...',
+    type: 'text',
+    boost: 999,
+    info: 'Fetching schema data...'
+  };
+
+  if (result) {
+    return {
+      ...result,
+      options: [loadingOption, ...result.options]
+    };
+  }
+
+  return {
+    from,
+    options: [loadingOption]
+  };
 }
 
 export function buildSchemaConfig(

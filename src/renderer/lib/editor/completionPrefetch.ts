@@ -21,10 +21,44 @@ export interface CompletionPrefetchController {
   dispose(): void;
 }
 
+export interface SharedSchemaCatalog {
+  ensureDatabases(sessionId: SessionId, profileId: string): Promise<string[]>;
+}
+
+function keyOf(sessionId: SessionId, profileId: string): string {
+  return `${sessionId}\u0000${profileId}`;
+}
+
+export function createSharedSchemaCatalog(
+  cache: CompletionCache,
+  fetcher: CompletionFetcher
+): SharedSchemaCatalog {
+  const inFlightDatabases = new Map<string, Promise<string[]>>();
+
+  return {
+    ensureDatabases(sessionId, profileId) {
+      const cached = cache.get(profileId, ['databases']);
+      if (cached !== null) return Promise.resolve(cached);
+
+      const key = keyOf(sessionId, profileId);
+      const pending = inFlightDatabases.get(key);
+      if (pending) return pending;
+
+      const promise = fetcher.ensure(sessionId, profileId, ['databases']).then(() => {
+        return cache.get(profileId, ['databases']) ?? [];
+      });
+      inFlightDatabases.set(key, promise);
+      promise.finally(() => inFlightDatabases.delete(key));
+      return promise;
+    }
+  };
+}
+
 export function setupCompletionPrefetch(
   deps: CompletionPrefetchDeps
 ): CompletionPrefetchController {
   const { cache, fetcher, sessionsStore } = deps;
+  const catalog = createSharedSchemaCatalog(cache, fetcher);
   const warmedSessions = new Set<SessionId>();
   let activeToken = 0;
   let disposed = false;
@@ -34,7 +68,7 @@ export function setupCompletionPrefetch(
     profileId: string,
     token: number
   ): Promise<void> {
-    await fetcher.ensure(sessionId, profileId, ['databases']);
+    await catalog.ensureDatabases(sessionId, profileId);
     // Stale token => session switched/closed mid-fetch: stop before schemas.
     if (disposed || token !== activeToken) return;
 

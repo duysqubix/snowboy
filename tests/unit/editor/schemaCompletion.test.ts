@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { getFetchPath, buildSchemaConfig } from '../../../src/renderer/lib/editor/schemaCompletion';
+import {
+  getFetchPath,
+  buildSchemaConfig,
+  withLoadingCompletion
+} from '../../../src/renderer/lib/editor/schemaCompletion';
 import { createCompletionCache } from '../../../src/renderer/lib/editor/completionCache';
 
 describe('schemaCompletion', () => {
@@ -29,6 +33,35 @@ describe('schemaCompletion', () => {
       cache.set('profile1', ['tables', 'db1', 'schema1'], ['table1', 'table2']);
       const path = getFetchPath('table1.', 'db1', 'schema1', 'profile1', cache);
       expect(path).toEqual(['columns', 'db1', 'schema1', 'table1']);
+    });
+
+    test('returns columns with a cached fallback schema when current schema is unknown', () => {
+      const cache = createCompletionCache();
+      cache.set('profile1', ['schemas', 'db1'], ['PUBLIC', 'ANALYTICS']);
+
+      const path = getFetchPath('table1.', 'db1', undefined, 'profile1', cache);
+
+      expect(path).toEqual(['columns', 'db1', 'PUBLIC', 'table1']);
+    });
+
+    test('does not fetch tables for a mid-typed schema fragment', () => {
+      const cache = createCompletionCache();
+      cache.set('profile1', ['databases'], ['CALIBER_DWH']);
+      cache.set('profile1', ['schemas', 'CALIBER_DWH'], ['DS', 'PUBLIC']);
+
+      const path = getFetchPath('CALIBER_DWH.X.', 'CALIBER_DWH', 'DS', 'profile1', cache);
+
+      expect(path).toBe(null);
+    });
+
+    test('returns tables for a known fully-qualified schema', () => {
+      const cache = createCompletionCache();
+      cache.set('profile1', ['databases'], ['CALIBER_DWH']);
+      cache.set('profile1', ['schemas', 'CALIBER_DWH'], ['DS', 'PUBLIC']);
+
+      const path = getFetchPath('CALIBER_DWH.DS.', 'CALIBER_DWH', 'PUBLIC', 'profile1', cache);
+
+      expect(path).toEqual(['tables', 'CALIBER_DWH', 'DS']);
     });
 
     test('returns columns when typing db.schema.table.', () => {
@@ -61,6 +94,32 @@ describe('schemaCompletion', () => {
       
       // Nested items
       expect(config['db1'].children['schema2'].children['table2'].self.boost).toBe(1);
+    });
+  });
+
+  describe('withLoadingCompletion', () => {
+    test('prepends the loading sentinel to an existing completion result', () => {
+      const result = withLoadingCompletion({ from: 7, options: [{ label: 'ID', type: 'property' }] }, 7);
+
+      expect(result.from).toBe(7);
+      expect(result.options.map((option) => option.label)).toEqual(['Loading...', 'ID']);
+      expect(result.options[0]?.info).toBe('Fetching schema data...');
+    });
+
+    test('returns only the loading sentinel when the SQL source has no result', () => {
+      const result = withLoadingCompletion(null, 11);
+
+      expect(result).toEqual({
+        from: 11,
+        options: [
+          {
+            label: 'Loading...',
+            type: 'text',
+            boost: 999,
+            info: 'Fetching schema data...'
+          }
+        ]
+      });
     });
   });
 });

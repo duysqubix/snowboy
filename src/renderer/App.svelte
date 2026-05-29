@@ -15,24 +15,24 @@
   import ShortcutsModal from '$lib/help/ShortcutsModal.svelte';
   import RecentlyClosedMenu from '$lib/shell/RecentlyClosedMenu.svelte';
 
-  import { tabs, installTabsKeymap } from '$lib/stores/tabs.svelte';
-  import { panes as panesSingleton, type PaneTreeStore } from '$lib/stores/panes.svelte';
-  import { recentlyClosed } from '$lib/stores/recentlyClosed.svelte';
-  import { installKeymap, registerShortcut } from '$lib/utils/keymap';
-  import { profiles } from '$lib/stores/profiles.svelte';
-  import { sessions } from '$lib/stores/sessions.svelte';
-  import { dialogs } from '$lib/stores/dialogs.svelte';
-  import { snowboy } from '$lib/ipc/client';
-  import { debounce } from '$lib/utils/debounce';
-  import { completionCache } from '$lib/editor/completionCacheSingleton';
-  import { createCompletionFetcher } from '$lib/editor/completionFetcher';
-  import { setupCompletionPrefetch } from '$lib/editor/completionPrefetch';
+import { tabs, installTabsKeymap } from '$lib/stores/tabs.svelte';
+import { panes as panesSingleton, type PaneTreeStore } from '$lib/stores/panes.svelte';
+import { recentlyClosed } from '$lib/stores/recentlyClosed.svelte';
+import { installKeymap, registerShortcut } from '$lib/utils/keymap';
+import { profiles } from '$lib/stores/profiles.svelte';
+import { sessions } from '$lib/stores/sessions.svelte';
+import { dialogs } from '$lib/stores/dialogs.svelte';
+import { snowboy } from '$lib/ipc/client';
+import { debounce } from '$lib/utils/debounce';
+import { completionCache } from '$lib/editor/completionCacheSingleton';
+import { schemaFetcher } from '$lib/editor/sharedSchemaCatalog';
+import { setupCompletionPrefetch } from '$lib/editor/completionPrefetch';
 
   let layoutRestored = $state(false);
 
   const completionPrefetch = setupCompletionPrefetch({
     cache: completionCache,
-    fetcher: createCompletionFetcher(completionCache, snowboy),
+    fetcher: schemaFetcher,
     sessionsStore: sessions
   });
 

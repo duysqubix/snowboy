@@ -15,6 +15,7 @@
   import { snowboy } from '../ipc/client';
   import type { ObjectRef, SchemaObject, SessionId } from '../../../main/types';
   import { completionCache } from '../editor/completionCacheSingleton';
+  import { sharedSchemaCatalog } from '../editor/sharedSchemaCatalog';
   import {
     cacheColumns,
     cacheDatabases,
@@ -67,8 +68,10 @@
     rootLoading = true;
     rootError = null;
     try {
-      const dbs = await snowboy.schema.listDatabases(sid);
       const profileId = profiles.activeProfileId;
+      const dbs = profileId === null
+        ? await snowboy.schema.listDatabases(sid)
+        : await sharedSchemaCatalog.ensureDatabases(sid, profileId);
       if (profileId !== null) {
         cacheDatabases(completionCache, profileId, dbs);
       }

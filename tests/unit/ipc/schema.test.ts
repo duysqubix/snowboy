@@ -65,6 +65,7 @@ interface QueryResult {
 interface QueryStub {
   match: RegExp;
   result: QueryResult | (() => QueryResult);
+  error?: Error;
 }
 
 interface FakeSessionConfig {
@@ -98,6 +99,10 @@ function makeFakeSession(config: FakeSessionConfig): Session {
         const stub = config.stubs.find((s) => s.match.test(sql));
         if (stub === undefined) {
           callbacks.onError(new Error(`fake session: no stub matched SQL: ${sql}`));
+          return;
+        }
+        if (stub.error) {
+          callbacks.onError(stub.error);
           return;
         }
         const data = typeof stub.result === 'function' ? stub.result() : stub.result;
@@ -362,6 +367,28 @@ describe('listObjects', () => {
     seedProfile();
     const id = await openWithStubs([]);
     await expect(listObjects(id, 'DB', '')).rejects.toThrow(/schema is required/);
+  });
+
+  test('returns an empty list when Snowflake reports the schema does not exist', async () => {
+    seedProfile();
+    const missingSchema = new Error('Object does not exist, or operation cannot be performed.');
+    Object.assign(missingSchema, { code: '002043', sqlState: '02000' });
+    const id = await openWithStubs([
+      {
+        match: /^SHOW TABLES IN SCHEMA "DB_ANALYTICS"\."MISSING"$/,
+        result: { columns: [nameColumn], rows: [] },
+        error: missingSchema
+      },
+      {
+        match: /^SHOW VIEWS IN SCHEMA "DB_ANALYTICS"\."MISSING"$/,
+        result: { columns: [nameColumn], rows: [] },
+        error: missingSchema
+      }
+    ]);
+
+    const objects = await listObjects(id, 'DB_ANALYTICS', 'MISSING');
+
+    expect(objects).toEqual([]);
   });
 });
 

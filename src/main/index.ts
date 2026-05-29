@@ -59,6 +59,7 @@ function createWindow(): void {
     width: 1280,
     height: 800,
     title: 'Snowboy',
+    icon: join(moduleDir, '../../resources/icon.png'),
     backgroundColor: '#020617',
     show: false,
     autoHideMenuBar: true,

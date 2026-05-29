@@ -25,6 +25,18 @@
     "rebuild": "bun run scripts/rebuild-natives.ts",
     "postinstall": "bun run rebuild"
   },
+  "build": {
+    "appId": "com.snowboy.app",
+    "productName": "Snowboy",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*"
+    ],
+    "icon": "resources/icon.png"
+  },
   "trustedDependencies": [
     "electron",
     "better-sqlite3"

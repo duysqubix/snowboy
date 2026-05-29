@@ -82,6 +82,10 @@ export interface SchemaObject {
   comment?: string;
 }
 
+export interface ListObjectsOptions {
+  source?: 'completion';
+}
+
 export interface Column {
   name: string;
   dataType: string;
@@ -198,7 +202,12 @@ export interface SnowboyApi {
   schema: {
     listDatabases(sessionId: SessionId): Promise<string[]>;
     listSchemas(sessionId: SessionId, db: string): Promise<string[]>;
-    listObjects(sessionId: SessionId, db: string, schema: string): Promise<SchemaObject[]>;
+    listObjects(
+      sessionId: SessionId,
+      db: string,
+      schema: string,
+      options?: ListObjectsOptions
+    ): Promise<SchemaObject[]>;
     listRoles(sessionId: SessionId): Promise<string[]>;
     listWarehouses(sessionId: SessionId): Promise<string[]>;
     getColumns(sessionId: SessionId, obj: ObjectRef): Promise<Column[]>;

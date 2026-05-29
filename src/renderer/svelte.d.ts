@@ -8,6 +8,11 @@ declare module '*.svelte' {
 
 declare module '*.css';
 
+declare module '*?asset' {
+  const src: string;
+  export default src;
+}
+
 declare global {
   interface Window {
     snowboy: SnowboyApi;
