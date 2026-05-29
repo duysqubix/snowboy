@@ -369,7 +369,7 @@ describe('listObjects', () => {
     await expect(listObjects(id, 'DB', '')).rejects.toThrow(/schema is required/);
   });
 
-  test('returns an empty list when Snowflake reports the schema does not exist', async () => {
+  test('returns an empty list for completion when Snowflake reports the schema does not exist', async () => {
     seedProfile();
     const missingSchema = new Error('Object does not exist, or operation cannot be performed.');
     Object.assign(missingSchema, { code: '002043', sqlState: '02000' });
@@ -386,9 +386,31 @@ describe('listObjects', () => {
       }
     ]);
 
-    const objects = await listObjects(id, 'DB_ANALYTICS', 'MISSING');
+    const objects = await listObjects(id, 'DB_ANALYTICS', 'MISSING', { source: 'completion' });
 
     expect(objects).toEqual([]);
+  });
+
+  test('surfaces missing schema errors for explicit object browser calls', async () => {
+    seedProfile();
+    const missingSchema = new Error('Object does not exist, or operation cannot be performed.');
+    Object.assign(missingSchema, { code: '002043', sqlState: '02000' });
+    const id = await openWithStubs([
+      {
+        match: /^SHOW TABLES IN SCHEMA "DB_ANALYTICS"\."MISSING"$/,
+        result: { columns: [nameColumn], rows: [] },
+        error: missingSchema
+      },
+      {
+        match: /^SHOW VIEWS IN SCHEMA "DB_ANALYTICS"\."MISSING"$/,
+        result: { columns: [nameColumn], rows: [] },
+        error: missingSchema
+      }
+    ]);
+
+    await expect(listObjects(id, 'DB_ANALYTICS', 'MISSING')).rejects.toThrow(
+      /Object does not exist/
+    );
   });
 });
 

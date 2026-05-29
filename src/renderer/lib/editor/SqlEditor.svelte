@@ -17,9 +17,8 @@
   import { autocompletion, completionKeymap, CompletionContext, startCompletion } from '@codemirror/autocomplete';
   import { schemaCompletionSource, type SQLNamespace } from '@codemirror/lang-sql';
   import { completionCache } from './completionCacheSingleton';
-  import { createCompletionFetcher } from './completionFetcher';
+  import { schemaFetcher } from './sharedSchemaCatalog';
   import { getFetchPath, buildSchemaConfig, withLoadingCompletion } from './schemaCompletion';
-  import { snowboy } from '../ipc/client';
   import { sessions } from '../stores/sessions.svelte';
   import { profiles } from '../stores/profiles.svelte';
   import { lintGutter } from '@codemirror/lint';
@@ -83,7 +82,7 @@
   const placeholderCompartment = new Compartment();
   const keymapCompartment = new Compartment();
   const schemaCompartment = new Compartment();
-  const fetcher = createCompletionFetcher(completionCache, snowboy);
+  const fetcher = schemaFetcher;
 
   // The CM keymap is built once at mount and lives inside a compartment so
   // the *handler* callbacks must dispatch through a stable reference. We

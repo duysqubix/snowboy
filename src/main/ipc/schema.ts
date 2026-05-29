@@ -42,7 +42,7 @@ import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
 import type { Session } from '../snowflake/session';
 import type { ColumnMeta } from '../snowflake/types';
-import type { Column, ObjectRef, SchemaObject, SessionId } from '../types';
+import type { Column, ListObjectsOptions, ObjectRef, SchemaObject, SessionId } from '../types';
 import { onSessionClose, requireSession } from './sessions';
 import {
   getCached,
@@ -251,12 +251,13 @@ async function fetchObjectsOfKindOrEmptyForMissingSchema(
   database: string,
   schema: string,
   command: 'TABLES' | 'VIEWS',
-  kind: 'table' | 'view'
+  kind: 'table' | 'view',
+  downgradeMissingSchema: boolean
 ): Promise<SchemaObject[]> {
   try {
     return await fetchObjectsOfKind(session, database, schema, command, kind);
   } catch (err) {
-    if (isSnowflakeObjectDoesNotExistError(err)) {
+    if (downgradeMissingSchema && isSnowflakeObjectDoesNotExistError(err)) {
       console.warn(
         `[schema] listObjects: ${database}.${schema} does not exist while fetching ${kind}s`
       );
@@ -382,7 +383,8 @@ export async function listSchemas(
 export async function listObjects(
   sessionId: SessionId,
   database: string,
-  schema: string
+  schema: string,
+  options?: ListObjectsOptions
 ): Promise<SchemaObject[]> {
   if (typeof database !== 'string' || database.length === 0) {
     throw new Error('schema.listObjects: database is required');
@@ -392,12 +394,27 @@ export async function listObjects(
   }
   const session = requireSession(sessionId);
   const profileId = session.getProfileId();
+  const downgradeMissingSchema = options?.source === 'completion';
   const [tables, views] = await Promise.all([
     getOrFetch<SchemaObject[]>(profileId, database, schema, 'table', () =>
-      fetchObjectsOfKindOrEmptyForMissingSchema(session, database, schema, 'TABLES', 'table')
+      fetchObjectsOfKindOrEmptyForMissingSchema(
+        session,
+        database,
+        schema,
+        'TABLES',
+        'table',
+        downgradeMissingSchema
+      )
     ),
     getOrFetch<SchemaObject[]>(profileId, database, schema, 'view', () =>
-      fetchObjectsOfKindOrEmptyForMissingSchema(session, database, schema, 'VIEWS', 'view')
+      fetchObjectsOfKindOrEmptyForMissingSchema(
+        session,
+        database,
+        schema,
+        'VIEWS',
+        'view',
+        downgradeMissingSchema
+      )
     )
   ]);
   return [...tables, ...views];
@@ -468,8 +485,13 @@ export function register(ipcMain: IpcMain): void {
   );
   ipcMain.handle(
     CHANNELS.schema.listObjects,
-    (_event, sessionId: SessionId, database: string, schema: string) =>
-      listObjects(sessionId, database, schema)
+    (
+      _event,
+      sessionId: SessionId,
+      database: string,
+      schema: string,
+      options?: ListObjectsOptions
+    ) => listObjects(sessionId, database, schema, options)
   );
   ipcMain.handle(
     CHANNELS.schema.getColumns,

@@ -7,6 +7,7 @@ import type {
   EffectiveTheme,
   HistoryEntry,
   HistoryFilter,
+  ListObjectsOptions,
   LayoutTree,
   LayoutTreeSerialized,
   ObjectRef,
@@ -168,9 +169,10 @@ const api = {
     listObjects: (
       sessionId: SessionId,
       db: string,
-      schema: string
+      schema: string,
+      options?: ListObjectsOptions
     ): Promise<SchemaObject[]> =>
-      ipcRenderer.invoke(CHANNELS.schema.listObjects, sessionId, db, schema),
+      ipcRenderer.invoke(CHANNELS.schema.listObjects, sessionId, db, schema, options),
     getColumns: (sessionId: SessionId, obj: ObjectRef): Promise<Column[]> =>
       ipcRenderer.invoke(CHANNELS.schema.getColumns, sessionId, obj),
     getDDL: (sessionId: SessionId, obj: ObjectRef): Promise<string> =>

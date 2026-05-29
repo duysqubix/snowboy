@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createCompletionCache } from '../../../src/renderer/lib/editor/completionCache';
 import { createCompletionFetcher } from '../../../src/renderer/lib/editor/completionFetcher';
-import type { Column, SchemaObject, SessionId } from '../../../src/main/types';
+import type { Column, ListObjectsOptions, SchemaObject, SessionId } from '../../../src/main/types';
 
 const SID = 'sess-1' as SessionId;
 const PROFILE = 'profile-1';
@@ -15,7 +15,12 @@ interface MockApi {
   schema: {
     listDatabases: (sessionId: SessionId) => Promise<string[]>;
     listSchemas: (sessionId: SessionId, db: string) => Promise<string[]>;
-    listObjects: (sessionId: SessionId, db: string, schema: string) => Promise<SchemaObject[]>;
+    listObjects: (
+      sessionId: SessionId,
+      db: string,
+      schema: string,
+      options?: ListObjectsOptions
+    ) => Promise<SchemaObject[]>;
     getColumns: (sessionId: SessionId, obj: unknown) => Promise<Column[]>;
   };
   calls: SchemaCall[];
@@ -32,8 +37,13 @@ function makeApi(overrides: Partial<MockApi['schema']> = {}): MockApi {
       calls.push({ method: 'listSchemas', args: [sessionId, db] });
       return ['PUBLIC', 'PRIVATE'];
     },
-    listObjects: async (sessionId: SessionId, db: string, sch: string): Promise<SchemaObject[]> => {
-      calls.push({ method: 'listObjects', args: [sessionId, db, sch] });
+    listObjects: async (
+      sessionId: SessionId,
+      db: string,
+      sch: string,
+      options?: ListObjectsOptions
+    ): Promise<SchemaObject[]> => {
+      calls.push({ method: 'listObjects', args: [sessionId, db, sch, options] });
       return [
         { name: 'CUSTOMERS', kind: 'table' },
         { name: 'ORDERS', kind: 'table' },
@@ -94,7 +104,9 @@ describe('completionFetcher', () => {
 
     await fetcher.ensure(SID, PROFILE, ['tables', 'DB_A', 'PUBLIC']);
 
-    expect(api.calls).toEqual([{ method: 'listObjects', args: [SID, 'DB_A', 'PUBLIC'] }]);
+    expect(api.calls).toEqual([
+      { method: 'listObjects', args: [SID, 'DB_A', 'PUBLIC', { source: 'completion' }] }
+    ]);
     expect(cache.get(PROFILE, ['tables', 'DB_A', 'PUBLIC'])).toEqual(['CUSTOMERS', 'ORDERS']);
   });
 

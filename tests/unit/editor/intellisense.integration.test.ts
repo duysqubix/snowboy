@@ -18,6 +18,7 @@ import {
 import type { CompletionPath } from '../../../src/renderer/lib/editor/completionCache';
 import type {
   Column,
+  ListObjectsOptions,
   ObjectRef,
   SchemaObject,
   SessionId,
@@ -57,9 +58,10 @@ function makeSchemaApi(
     listObjects: async (
       sessionId: SessionId,
       db: string,
-      sch: string
+      sch: string,
+      options?: ListObjectsOptions
     ): Promise<SchemaObject[]> => {
-      calls.push({ method: 'listObjects', args: [sessionId, db, sch] });
+      calls.push({ method: 'listObjects', args: [sessionId, db, sch, options] });
       return [
         { name: 'CUSTOMERS', kind: 'table' },
         { name: 'ORDERS', kind: 'table' },

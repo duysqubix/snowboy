@@ -19,7 +19,7 @@ function planFetch(path: CompletionPath): (api: SchemaApi, sessionId: SessionId)
     const db = path[1]!;
     const schema = path[2]!;
     return async (api, sid) => {
-      const objects = await api.schema.listObjects(sid, db, schema);
+      const objects = await api.schema.listObjects(sid, db, schema, { source: 'completion' });
       return objects.filter((o) => o.kind === 'table').map((o) => o.name);
     };
   }
