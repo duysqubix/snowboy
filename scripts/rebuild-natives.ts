@@ -1,18 +1,22 @@
 /**
- * Rebuilds native Node addons against Electron's bundled Node ABI.
+ * Installs Electron-ABI builds of native Node addons.
  *
  * Why this exists: Electron 32 bundles Node 20.18; the host Bun toolchain
  * uses Node 24. Prebuilt binaries fetched by `bun install` / `npm install`
  * target the host ABI and abort with `NODE_MODULE_VERSION` mismatch errors
  * the first time Electron's main process tries to require them. This script
- * uses `@electron/rebuild` programmatically to recompile every listed native
- * dependency against the locally-installed Electron's headers.
+ * runs `@electron/rebuild` programmatically for every listed native
+ * dependency: it downloads the module's published prebuild for the installed
+ * Electron version (better-sqlite3 publishes one per Electron ABI through
+ * prebuild-install) and compiles against Electron's headers only when no
+ * prebuild exists for this platform or the download fails.
  *
  * Invocation:
  *   bun run rebuild                     (manual)
  *   bun install                         (via the `postinstall` hook)
  *
- * Exits non-zero on any failure so CI surfaces native-build breakage early.
+ * Exits non-zero on any failure so a broken native module fails the install
+ * instead of the first app launch.
  */
 
 import { rebuild } from '@electron/rebuild';
@@ -61,8 +65,13 @@ async function main(): Promise<void> {
     buildPath: PROJECT_ROOT,
     electronVersion,
     arch: process.arch,
+    // Without force, @electron/rebuild skips a module whose build/Release/.forge-meta
+    // marker matches this arch and ABI, without checking the binary. better-sqlite3's
+    // own install script can swap in a host-ABI binary and leave that marker behind.
+    // With a prebuild available, forcing is cheap: prebuild-install re-extracts its
+    // cached download.
     force: true,
-    buildFromSource: true,
+    buildFromSource: false,
     onlyModules: [...TARGET_MODULES]
   });
 
