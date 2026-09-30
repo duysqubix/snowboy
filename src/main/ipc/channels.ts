@@ -11,7 +11,12 @@ export const CHANNELS = {
     test: 'connections.test',
     setPassword: 'connections.set-password',
     clearPassword: 'connections.clear-password',
-    hasPassword: 'connections.has-password'
+    hasPassword: 'connections.has-password',
+    pickPrivateKeyFile: 'connections.pick-private-key-file',
+    checkPrivateKey: 'connections.check-private-key',
+    setPrivateKeyPassphrase: 'connections.set-private-key-passphrase',
+    clearPrivateKeyPassphrase: 'connections.clear-private-key-passphrase',
+    hasPrivateKeyPassphrase: 'connections.has-private-key-passphrase'
   },
   sessions: {
     open: 'sessions.open',

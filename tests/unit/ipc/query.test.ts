@@ -153,7 +153,8 @@ beforeEach(() => {
     default_role: null,
     default_warehouse: null,
     default_database: null,
-    default_schema: null
+    default_schema: null,
+    private_key_path: null
   });
 });
 

@@ -8,7 +8,7 @@
 import type BetterSqlite3 from 'better-sqlite3';
 import { getDatabase, type Database } from './db';
 
-export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
+export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat' | 'keypair';
 
 export interface ConnectionProfileRow {
   id: string;
@@ -20,6 +20,8 @@ export interface ConnectionProfileRow {
   default_warehouse: string | null;
   default_database: string | null;
   default_schema: string | null;
+  /** `keypair` only: path of the PEM private key (the key is never stored). */
+  private_key_path: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -50,14 +52,14 @@ function stmts(db: Database): ProfileStmts {
       'INSERT INTO connection_profiles (' +
         'id, name, account_url, auth_method, username, ' +
         'default_role, default_warehouse, default_database, default_schema, ' +
-        'created_at, updated_at' +
-        ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'private_key_path, created_at, updated_at' +
+        ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ),
     update: db.prepare(
       'UPDATE connection_profiles SET ' +
         'name = ?, account_url = ?, auth_method = ?, username = ?, ' +
         'default_role = ?, default_warehouse = ?, default_database = ?, default_schema = ?, ' +
-        'updated_at = ? ' +
+        'private_key_path = ?, updated_at = ? ' +
         'WHERE id = ?'
     ),
     remove: db.prepare('DELETE FROM connection_profiles WHERE id = ?')
@@ -87,6 +89,7 @@ export function insertProfile(profile: NewConnectionProfile): ConnectionProfileR
     default_warehouse: profile.default_warehouse ?? null,
     default_database: profile.default_database ?? null,
     default_schema: profile.default_schema ?? null,
+    private_key_path: profile.private_key_path ?? null,
     created_at: now,
     updated_at: now
   };
@@ -100,6 +103,7 @@ export function insertProfile(profile: NewConnectionProfile): ConnectionProfileR
     row.default_warehouse,
     row.default_database,
     row.default_schema,
+    row.private_key_path,
     row.created_at,
     row.updated_at
   );
@@ -127,6 +131,8 @@ export function updateProfile(
       patch.default_database !== undefined ? patch.default_database : current.default_database,
     default_schema:
       patch.default_schema !== undefined ? patch.default_schema : current.default_schema,
+    private_key_path:
+      patch.private_key_path !== undefined ? patch.private_key_path : current.private_key_path,
     updated_at: Date.now()
   };
   stmts(getDatabase()).update.run(
@@ -138,6 +144,7 @@ export function updateProfile(
     next.default_warehouse,
     next.default_database,
     next.default_schema,
+    next.private_key_path,
     next.updated_at,
     next.id
   );

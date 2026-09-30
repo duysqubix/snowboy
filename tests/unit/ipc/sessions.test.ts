@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,6 +105,7 @@ function seedProfile(overrides: Partial<Parameters<typeof insertProfile>[0]> = {
     default_warehouse: 'WH_XS',
     default_database: null,
     default_schema: null,
+    private_key_path: null,
     ...overrides
   });
 }
@@ -189,6 +191,82 @@ describe('openSession', () => {
 
     await openSession('p1', {});
     expect(receivedContext).toEqual({});
+  });
+});
+
+describe('openSession (key-pair, M2.1b)', () => {
+  const PASSPHRASE = 'correct horse battery staple';
+  let keyDir: string;
+  let encryptedKey: string;
+
+  beforeAll(async () => {
+    keyDir = await mkdtemp(path.join(tmpdir(), 'snowboy-sess-keys-'));
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    encryptedKey = path.join(keyDir, 'rsa_key.p8');
+    await writeFile(
+      encryptedKey,
+      privateKey.export({
+        type: 'pkcs8',
+        format: 'pem',
+        cipher: 'aes-256-cbc',
+        passphrase: PASSPHRASE
+      })
+    );
+  });
+
+  afterAll(async () => {
+    await rm(keyDir, { recursive: true, force: true });
+  });
+
+  test('forwards the key path on the profile and the stored passphrase in options', async () => {
+    seedProfile({ auth_method: 'keypair', private_key_path: encryptedKey });
+    await setSecret('profile:p1:private_key_passphrase', PASSPHRASE);
+
+    let receivedProfile: ConnectionProfileLite | null = null;
+    let receivedPassphrase: string | undefined;
+    __setSessionFactoryForTesting(async (profile, _ctx, options) => {
+      receivedProfile = profile;
+      receivedPassphrase = options.password;
+      return makeFakeSession({ id: 'kp-session' });
+    });
+
+    const id = await openSession('p1', {});
+    expect(id).toBe('kp-session' as SessionId);
+    expect(receivedProfile!.authMethod).toBe('keypair');
+    expect(receivedProfile!.privateKeyPath).toBe(encryptedKey);
+    expect(receivedPassphrase).toBe(PASSPHRASE);
+  });
+
+  test('rejects before connecting when the key file is gone', async () => {
+    const gone = path.join(keyDir, 'moved.p8');
+    seedProfile({ auth_method: 'keypair', private_key_path: gone });
+    let connected = false;
+    __setSessionFactoryForTesting(async () => {
+      connected = true;
+      return makeFakeSession();
+    });
+
+    await expect(openSession('p1', {})).rejects.toThrow(/not found/);
+    expect(connected).toBe(false);
+  });
+
+  test('rejects before connecting when the key is encrypted and no passphrase is stored', async () => {
+    seedProfile({ auth_method: 'keypair', private_key_path: encryptedKey });
+    let connected = false;
+    __setSessionFactoryForTesting(async () => {
+      connected = true;
+      return makeFakeSession();
+    });
+
+    await expect(openSession('p1', {})).rejects.toThrow(/sessions\.open: .*encrypted/);
+    expect(connected).toBe(false);
+  });
+
+  test('rejects when the profile has no key file set', async () => {
+    seedProfile({ auth_method: 'keypair', private_key_path: null });
+    __setSessionFactoryForTesting(async () => makeFakeSession());
+
+    await expect(openSession('p1', {})).rejects.toThrow(/private key file/);
   });
 });
 

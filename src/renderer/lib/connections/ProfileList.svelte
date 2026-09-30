@@ -27,6 +27,7 @@
       case 'password_mfa': return 'PW+MFA';
       case 'password': return 'PW';
       case 'pat': return 'PAT';
+      case 'keypair': return 'KEY';
       default: return method;
     }
   }

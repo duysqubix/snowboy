@@ -9,7 +9,8 @@
  *
  * `open(profileId, context)` reads the profile row, materializes the
  * `ConnectionProfileLite` shape the driver expects, fetches a password
- * from `safeStorage` when the auth method requires one, calls
+ * from `safeStorage` when the auth method requires one (for key-pair
+ * profiles, validates the key file and fetches its passphrase), calls
  * `Session.open(lite, context, options)`, and registers the result.
  *
  * `close(sessionId)` is idempotent — a stale id (already closed, or
@@ -30,7 +31,8 @@
 
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
-import { getProfile as storageGetProfile } from '../storage/profiles';
+import { prepareKeyPairAuth } from './connections';
+import { getProfile as storageGetProfile, type AuthMethod } from '../storage/profiles';
 import { getSecret } from '../secrets/safeStorage';
 import { Session, type OpenSessionOptions } from '../snowflake/session';
 import type {
@@ -141,8 +143,9 @@ function passwordKey(profileId: string): string {
 interface ProfileRowLike {
   id: string;
   account_url: string;
-  auth_method: 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
+  auth_method: AuthMethod;
   username: string;
+  private_key_path: string | null;
   default_role: string | null;
   default_warehouse: string | null;
   default_database: string | null;
@@ -155,6 +158,9 @@ function rowToLite(row: ProfileRowLike): ConnectionProfileLite {
     accountUrl: row.account_url,
     authMethod: row.auth_method,
     username: row.username,
+    ...(row.private_key_path !== null && row.private_key_path !== ''
+      ? { privateKeyPath: row.private_key_path }
+      : {}),
     ...(row.default_role !== null && row.default_role !== ''
       ? { defaultRole: row.default_role }
       : {}),
@@ -219,6 +225,15 @@ export async function openSession(
       );
     }
     password = stored;
+  }
+
+  // Key-pair: `password` carries the key passphrase (see buildConnectOptions).
+  if (row.auth_method === 'keypair') {
+    try {
+      password = (await prepareKeyPairAuth(profileId, row.private_key_path)).passphrase;
+    } catch (err) {
+      throw new Error(`sessions.open: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const lite = rowToLite(row);

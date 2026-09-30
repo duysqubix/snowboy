@@ -8,7 +8,7 @@
 export type SessionId = string & { readonly __brand: 'SessionId' };
 export type QueryId = string & { readonly __brand: 'QueryId' };
 
-export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
+export type AuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat' | 'keypair';
 
 export interface ConnectionProfile {
   id: string;
@@ -16,6 +16,11 @@ export interface ConnectionProfile {
   accountUrl: string;
   authMethod: AuthMethod;
   username: string;
+  /**
+   * `keypair` only: absolute path of the PEM private key. The app stores the
+   * path, never the key; the optional passphrase lives in safeStorage.
+   */
+  privateKeyPath?: string;
   defaultRole?: string;
   defaultWarehouse?: string;
   defaultDatabase?: string;
@@ -29,6 +34,28 @@ export interface TestResult {
   message?: string;
   durationMs?: number;
 }
+
+/**
+ * Why a private key file can't be used for key-pair auth: the file is
+ * missing or unreadable, it isn't a usable private key, or the passphrase
+ * is missing or wrong.
+ */
+export type PrivateKeyProblem =
+  | 'not_found'
+  | 'unreadable'
+  | 'not_private_key'
+  | 'unsupported_format'
+  | 'passphrase_required'
+  | 'wrong_passphrase';
+
+/**
+ * Result of parsing a private key file in main. Never carries key material:
+ * `fingerprint` is the SHA-256 of the public key, in the `SHA256:<base64>`
+ * form Snowflake shows as `RSA_PUBLIC_KEY_FP` in `DESC USER`.
+ */
+export type PrivateKeyCheck =
+  | { ok: true; encrypted: boolean; fingerprint: string }
+  | { ok: false; problem: PrivateKeyProblem; message: string };
 
 export interface SessionContext {
   role?: string;
@@ -184,6 +211,20 @@ export interface SnowboyApi {
     setPassword(profileId: string, password: string): Promise<void>;
     clearPassword(profileId: string): Promise<void>;
     hasPassword(profileId: string): Promise<boolean>;
+    /** Native open dialog for a private key file; resolves `null` if cancelled. */
+    pickPrivateKeyFile(): Promise<string | null>;
+    /**
+     * Parses the key at `path`. Without a `passphrase`, a `profileId` makes
+     * main use that profile's stored passphrase.
+     */
+    checkPrivateKey(
+      path: string,
+      passphrase?: string,
+      profileId?: string
+    ): Promise<PrivateKeyCheck>;
+    setPrivateKeyPassphrase(profileId: string, passphrase: string): Promise<void>;
+    clearPrivateKeyPassphrase(profileId: string): Promise<void>;
+    hasPrivateKeyPassphrase(profileId: string): Promise<boolean>;
   };
   sessions: {
     open(profileId: string, context: SessionContext, passcode?: string): Promise<SessionId>;

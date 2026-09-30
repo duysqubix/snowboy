@@ -159,6 +159,39 @@ describe('validateProfile', () => {
     expect(validateProfile(profile)).toEqual([]);
   });
 
+  it('Key-pair profile with a key file -> valid', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Loader',
+      accountUrl: 'myorg-myaccount.snowflakecomputing.com',
+      authMethod: 'keypair',
+      username: 'svc_loader',
+      privateKeyPath: '/home/me/.snowflake/rsa_key.p8'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
+  it('Key-pair profile without a key file -> privateKeyPath error', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Loader',
+      accountUrl: 'myorg-myaccount.snowflakecomputing.com',
+      authMethod: 'keypair',
+      username: 'svc_loader'
+    };
+    const errors = validateProfile(profile);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].field).toBe('privateKeyPath');
+  });
+
+  it('Key file is only required for key-pair profiles', () => {
+    const profile: Partial<ConnectionProfile> = {
+      name: 'Test',
+      accountUrl: 'myaccount.snowflakecomputing.com',
+      authMethod: 'password',
+      username: 'user'
+    };
+    expect(validateProfile(profile)).toEqual([]);
+  });
+
   it('normalizeAccountUrl strips protocol + path + whitespace + lowercases', () => {
     expect(normalizeAccountUrl('  HTTPS://Foo-Bar.SnowflakeComputing.com/console?x=1  '))
       .toBe('foo-bar.snowflakecomputing.com');

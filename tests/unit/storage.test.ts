@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { dirname, resolve } from 'node:path';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -52,7 +54,8 @@ function makeProfileFixture(id: string): ConnectionProfileRow {
     default_role: 'ANALYST',
     default_warehouse: 'WH_XS',
     default_database: 'DB_ANALYTICS',
-    default_schema: 'PUBLIC'
+    default_schema: 'PUBLIC',
+    private_key_path: null
   });
 }
 
@@ -115,6 +118,46 @@ describe('migrate', () => {
     openFreshDb();
     expect(() => openFreshDb()).toThrow(/already open/);
   });
+
+  test('003_keypair_auth adds a nullable private_key_path column to connection_profiles', () => {
+    const db = openFreshDb();
+    const columns = db.prepare('PRAGMA table_info(connection_profiles)').all() as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const column = columns.find((c) => c.name === 'private_key_path');
+    expect(column).toBeDefined();
+    expect(column?.notnull).toBe(0);
+
+    const applied = db.prepare('SELECT version FROM schema_migrations').all() as Array<{
+      version: string;
+    }>;
+    expect(applied.map((r) => r.version)).toContain('003_keypair_auth');
+  });
+
+  test('003_keypair_auth upgrades a pre-key-pair database and keeps its profiles', () => {
+    const legacyDir = mkdtempSync(join(tmpdir(), 'snowboy-legacy-migrations-'));
+    try {
+      for (const file of ['001_initial.sql', '002_wave4.sql']) {
+        copyFileSync(join(MIGRATIONS_DIR, file), join(legacyDir, file));
+      }
+      const db = openDatabase({ path: ':memory:', migrationsDir: legacyDir });
+      db.prepare(
+        'INSERT INTO connection_profiles ' +
+          '(id, name, account_url, auth_method, username, created_at, updated_at) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run('old', 'Existing', 'https://a.snowflakecomputing.com', 'password', 'analyst', 1, 1);
+
+      runMigrations(db, { migrationsDir: MIGRATIONS_DIR });
+
+      const row = getProfile('old');
+      expect(row?.name).toBe('Existing');
+      expect(row?.auth_method).toBe('password');
+      expect(row?.private_key_path).toBeNull();
+    } finally {
+      rmSync(legacyDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('profiles', () => {
@@ -165,6 +208,32 @@ describe('profiles', () => {
     expect(row?.default_warehouse).toBeNull();
     expect(row?.default_database).toBeNull();
     expect(row?.default_schema).toBeNull();
+    expect(row?.private_key_path).toBeNull();
+  });
+
+  test('round-trips private_key_path through insert/get/update', () => {
+    insertProfile({
+      id: 'kp',
+      name: 'key pair',
+      account_url: 'https://example.snowflakecomputing.com',
+      auth_method: 'keypair',
+      username: 'svc_loader',
+      default_role: null,
+      default_warehouse: null,
+      default_database: null,
+      default_schema: null,
+      private_key_path: '/home/me/.snowflake/rsa_key.p8'
+    });
+    expect(getProfile('kp')?.private_key_path).toBe('/home/me/.snowflake/rsa_key.p8');
+
+    const rotated = updateProfile('kp', { private_key_path: '/home/me/.snowflake/rotated.p8' });
+    expect(rotated.private_key_path).toBe('/home/me/.snowflake/rotated.p8');
+
+    updateProfile('kp', { name: 'renamed' });
+    expect(getProfile('kp')?.private_key_path).toBe('/home/me/.snowflake/rotated.p8');
+
+    updateProfile('kp', { private_key_path: null });
+    expect(getProfile('kp')?.private_key_path).toBeNull();
   });
 });
 

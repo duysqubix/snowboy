@@ -21,6 +21,14 @@
  * triggering a confusing SDK error. `deleteProfile` cleans up every
  * `profile:${id}:*` key so deletion can never leak orphaned credentials.
  *
+ * Key-pair profiles (M2.1b) store only the private key's file path; the
+ * SDK reads the file at connect time. The optional key passphrase is keyed
+ * `profile:${profileId}:private_key_passphrase`. `test()` and
+ * `sessions.open` parse the key first (`prepareKeyPairAuth`), so a missing
+ * file or wrong passphrase gets a specific message before any network call.
+ * `saveProfile` deletes the secret of any auth method the profile no longer
+ * uses, so switching methods never leaves a password or passphrase behind.
+ *
  * Session test: `test()` opens a one-shot Session with empty session
  * context (the profile's defaults are already baked into the connect
  * options by `buildConnectOptions`), runs `SELECT CURRENT_ROLE()`, and
@@ -29,7 +37,16 @@
  * structured `TestResult` so the renderer can render a single toast.
  */
 
-import type { IpcMain } from 'electron';
+import { createRequire } from 'node:module';
+import { isAbsolute } from 'node:path';
+import type {
+  BrowserWindow,
+  Dialog,
+  IpcMain,
+  OpenDialogOptions,
+  OpenDialogReturnValue,
+  WebContents
+} from 'electron';
 import { CHANNELS } from './channels';
 import {
   deleteProfile as storageDeleteProfile,
@@ -47,6 +64,7 @@ import {
   listKeys,
   setSecret
 } from '../secrets/safeStorage';
+import { checkPrivateKeyFile } from '../snowflake/auth';
 import {
   Session,
   type OpenSessionOptions
@@ -55,10 +73,12 @@ import type {
   ConnectionProfileLite,
   SessionContext
 } from '../snowflake/types';
-import type { ConnectionProfile, TestResult } from '../types';
+import type { AuthMethod, ConnectionProfile, PrivateKeyCheck, TestResult } from '../types';
 
 const TEST_QUERY_SQL = 'SELECT CURRENT_ROLE() AS ROLE';
 const TEST_QUERY_TIMEOUT_MS = 30_000;
+
+const nodeRequire = createRequire(import.meta.url);
 
 /**
  * Translates known-confusing Snowflake error codes into actionable messages.
@@ -68,9 +88,10 @@ const TEST_QUERY_TIMEOUT_MS = 30_000;
  *
  * Pattern: detect the code in the raw error text, return a replacement
  * message that explains the cause + next step. Falls through to the raw
- * message when nothing matches.
+ * message when nothing matches. `keyFingerprint` (key-pair profiles only)
+ * is added to the JWT hint so it can be compared with `DESC USER` output.
  */
-function snowflakeErrorHint(raw: string): string {
+function snowflakeErrorHint(raw: string, keyFingerprint?: string): string {
   if (raw.includes('390190') || raw.includes('SAML Identity Provider account parameter')) {
     return (
       'This Snowflake account does not have SSO (SAML) configured, so ' +
@@ -89,6 +110,18 @@ function snowflakeErrorHint(raw: string): string {
     return (
       'This Snowflake user is locked. An account admin needs to unlock the ' +
       'user before sign-in can succeed.'
+    );
+  }
+  // Key-pair sign-in rejected. Checked before the 390114 branch below,
+  // which also matches this text.
+  if (raw.includes('390144') || raw.includes('JWT token is invalid')) {
+    const keyFp = keyFingerprint !== undefined ? ` (${keyFingerprint})` : '';
+    return (
+      'Snowflake rejected the key-pair sign-in (JWT token is invalid). Usually the ' +
+      "user's registered public key doesn't match this private key: compare " +
+      `RSA_PUBLIC_KEY_FP from DESC USER with this key's fingerprint${keyFp}, and if they ` +
+      "differ, register the public key with ALTER USER ... SET RSA_PUBLIC_KEY = '...'. " +
+      "Also check the profile's username and Account URL, and this computer's clock."
     );
   }
   if (raw.includes('390114') || raw.includes('JWT token is invalid')) {
@@ -135,8 +168,46 @@ function passwordKey(profileId: string): string {
   return `profile:${profileId}:password`;
 }
 
+/** Auth methods whose secret lives under `passwordKey` (a PAT included). */
+const PASSWORD_KEY_METHODS: ReadonlySet<AuthMethod> = new Set(['password', 'password_mfa', 'pat']);
+
+function privateKeyPassphraseKey(profileId: string): string {
+  return `profile:${profileId}:private_key_passphrase`;
+}
+
 function profilePrefix(profileId: string): string {
   return `profile:${profileId}:`;
+}
+
+/**
+ * Native open-dialog shape. Tests install a stub; production shows
+ * Electron's dialog, modal to the window whose renderer asked for it.
+ */
+export type OpenDialogFn = (
+  options: OpenDialogOptions,
+  requester: WebContents | null
+) => Promise<OpenDialogReturnValue>;
+
+function defaultOpenDialog(
+  options: OpenDialogOptions,
+  requester: WebContents | null
+): Promise<OpenDialogReturnValue> {
+  type ElectronModule = { dialog?: Dialog; BrowserWindow?: typeof BrowserWindow };
+  const mod = nodeRequire('electron') as ElectronModule;
+  if (mod?.dialog === undefined) {
+    throw new Error('[connections] electron.dialog is unavailable');
+  }
+  const owner = requester !== null ? (mod.BrowserWindow?.fromWebContents(requester) ?? null) : null;
+  return owner !== null
+    ? mod.dialog.showOpenDialog(owner, options)
+    : mod.dialog.showOpenDialog(options);
+}
+
+let openDialog: OpenDialogFn = defaultOpenDialog;
+
+/** Test-only: install a fake open dialog. Pass `null` to restore Electron's. */
+export function __setOpenDialogForTesting(fn: OpenDialogFn | null): void {
+  openDialog = fn ?? defaultOpenDialog;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +239,9 @@ function rowToProfile(row: ConnectionProfileRow): ConnectionProfile {
   if (row.default_schema !== null && row.default_schema !== '') {
     profile.defaultSchema = row.default_schema;
   }
+  if (row.private_key_path !== null && row.private_key_path !== '') {
+    profile.privateKeyPath = row.private_key_path;
+  }
   return profile;
 }
 
@@ -175,6 +249,22 @@ function normalizeOptional(v: string | undefined): string | null {
   if (v === undefined) return null;
   const trimmed = v.trim();
   return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * Only `keypair` profiles keep a key path, so switching a profile to another
+ * auth method drops it. The path comes from the native dialog, so it must be
+ * absolute, and it is not trimmed.
+ */
+function privateKeyPathFor(p: ConnectionProfile): string | null {
+  const raw: unknown = p.privateKeyPath;
+  if (p.authMethod !== 'keypair' || raw === undefined || raw === null || raw === '') {
+    return null;
+  }
+  if (typeof raw !== 'string' || !isAbsolute(raw)) {
+    throw new Error('saveProfile: privateKeyPath must be an absolute path');
+  }
+  return raw;
 }
 
 function profileToInsert(p: ConnectionProfile): NewConnectionProfile {
@@ -187,7 +277,8 @@ function profileToInsert(p: ConnectionProfile): NewConnectionProfile {
     default_role: normalizeOptional(p.defaultRole),
     default_warehouse: normalizeOptional(p.defaultWarehouse),
     default_database: normalizeOptional(p.defaultDatabase),
-    default_schema: normalizeOptional(p.defaultSchema)
+    default_schema: normalizeOptional(p.defaultSchema),
+    private_key_path: privateKeyPathFor(p)
   };
 }
 
@@ -200,7 +291,8 @@ function profileToPatch(p: ConnectionProfile): ConnectionProfilePatch {
     default_role: normalizeOptional(p.defaultRole),
     default_warehouse: normalizeOptional(p.defaultWarehouse),
     default_database: normalizeOptional(p.defaultDatabase),
-    default_schema: normalizeOptional(p.defaultSchema)
+    default_schema: normalizeOptional(p.defaultSchema),
+    private_key_path: privateKeyPathFor(p)
   };
 }
 
@@ -210,6 +302,9 @@ function rowToLite(row: ConnectionProfileRow): ConnectionProfileLite {
     accountUrl: row.account_url,
     authMethod: row.auth_method,
     username: row.username,
+    ...(row.private_key_path !== null && row.private_key_path !== ''
+      ? { privateKeyPath: row.private_key_path }
+      : {}),
     ...(row.default_role !== null && row.default_role !== ''
       ? { defaultRole: row.default_role }
       : {}),
@@ -263,6 +358,44 @@ async function runTinyQuery(
   });
 }
 
+/**
+ * Checks a key-pair profile's key before any SDK call. Returns the stored
+ * passphrase only when the key is encrypted (a leftover one for an
+ * unencrypted key is not forwarded), plus the key's fingerprint for error
+ * hints. Throws with a message ready for the user. Shared by `test()` and
+ * `sessions.open`.
+ */
+export async function prepareKeyPairAuth(
+  profileId: string,
+  privateKeyPath: string | null
+): Promise<{ passphrase?: string; fingerprint: string }> {
+  if (privateKeyPath === null || privateKeyPath === '') {
+    throw new Error(
+      'No private key file is set for this profile. Edit the profile and choose your private key file.'
+    );
+  }
+  const passphrase = (await getSecret(privateKeyPassphraseKey(profileId))) ?? undefined;
+  const check = await checkPrivateKeyFile(privateKeyPath, passphrase);
+  if (!check.ok) {
+    if (check.problem === 'passphrase_required') {
+      throw new Error(
+        'This private key is encrypted and no passphrase is stored for the profile. ' +
+          "Edit the profile and enter the key's passphrase."
+      );
+    }
+    if (check.problem === 'wrong_passphrase') {
+      throw new Error(
+        'The stored passphrase does not unlock this private key (or the key file is damaged). ' +
+          'Edit the profile and enter the correct passphrase.'
+      );
+    }
+    throw new Error(check.message);
+  }
+  return check.encrypted && passphrase !== undefined
+    ? { passphrase, fingerprint: check.fingerprint }
+    : { fingerprint: check.fingerprint };
+}
+
 // ---------------------------------------------------------------------------
 // Handler implementations (exported for direct unit testing)
 // ---------------------------------------------------------------------------
@@ -271,7 +404,7 @@ export function listProfiles(): ConnectionProfile[] {
   return storageListProfiles().map(rowToProfile);
 }
 
-export function saveProfile(p: ConnectionProfile): { id: string } {
+export async function saveProfile(p: ConnectionProfile): Promise<{ id: string }> {
   if (typeof p?.id !== 'string' || p.id.length === 0) {
     throw new Error('saveProfile: profile.id is required');
   }
@@ -281,6 +414,17 @@ export function saveProfile(p: ConnectionProfile): { id: string } {
   } else {
     storageUpdateProfile(p.id, profileToPatch(p));
   }
+  // Drop the secret of any method this profile no longer uses. Both deletes
+  // are queued before the first await, so they run ahead of any secret the
+  // caller sets next.
+  const unused: Promise<void>[] = [];
+  if (p.authMethod !== 'keypair') {
+    unused.push(deleteSecret(privateKeyPassphraseKey(p.id)));
+  }
+  if (!PASSWORD_KEY_METHODS.has(p.authMethod)) {
+    unused.push(deleteSecret(passwordKey(p.id)));
+  }
+  await Promise.all(unused);
   return { id: p.id };
 }
 
@@ -330,6 +474,95 @@ export async function hasPasswordForProfile(profileId: string): Promise<boolean>
   }
   const stored = await getSecret(passwordKey(profileId));
   return stored !== null;
+}
+
+export async function setPrivateKeyPassphraseForProfile(
+  profileId: string,
+  passphrase: string
+): Promise<void> {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    throw new Error('setPrivateKeyPassphrase: profileId is required');
+  }
+  if (typeof passphrase !== 'string' || passphrase.length === 0) {
+    throw new Error('setPrivateKeyPassphrase: passphrase must be a non-empty string');
+  }
+  const row = storageGetProfile(profileId);
+  if (row === null) {
+    throw new Error(`setPrivateKeyPassphrase: profile not found: ${profileId}`);
+  }
+  if (row.auth_method !== 'keypair') {
+    throw new Error(`setPrivateKeyPassphrase: profile ${profileId} does not use key-pair auth`);
+  }
+  await setSecret(privateKeyPassphraseKey(profileId), passphrase);
+}
+
+export async function clearPrivateKeyPassphraseForProfile(profileId: string): Promise<void> {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    throw new Error('clearPrivateKeyPassphrase: profileId is required');
+  }
+  await deleteSecret(privateKeyPassphraseKey(profileId));
+}
+
+/** Checks the key list only, so answering never decrypts the passphrase. */
+export async function hasPrivateKeyPassphraseForProfile(profileId: string): Promise<boolean> {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    return false;
+  }
+  const keys = await listKeys();
+  return keys.includes(privateKeyPassphraseKey(profileId));
+}
+
+/**
+ * Parses a key file for the wizard. A typed `passphrase` wins; without
+ * one, `profileId` selects that profile's stored passphrase, so an edited
+ * profile validates without its passphrase ever reaching the renderer.
+ */
+export async function checkPrivateKey(
+  filePath: string,
+  passphrase?: string,
+  profileId?: string
+): Promise<PrivateKeyCheck> {
+  const typed = typeof passphrase === 'string' && passphrase !== '' ? passphrase : undefined;
+  const stored =
+    typed === undefined && typeof profileId === 'string' && profileId.length > 0
+      ? ((await getSecret(privateKeyPassphraseKey(profileId))) ?? undefined)
+      : undefined;
+  const result = await checkPrivateKeyFile(
+    typeof filePath === 'string' ? filePath : '',
+    typed ?? stored
+  );
+  if (!result.ok && result.problem === 'wrong_passphrase' && stored !== undefined) {
+    return {
+      ...result,
+      message:
+        'The stored passphrase does not unlock this private key (or the key file is damaged). ' +
+        'Enter its passphrase.'
+    };
+  }
+  return result;
+}
+
+/**
+ * Native file picker for the private key, modal to `requester`'s window;
+ * resolves `null` when cancelled.
+ */
+export async function pickPrivateKeyFile(
+  requester: WebContents | null = null
+): Promise<string | null> {
+  const result = await openDialog(
+    {
+      title: 'Choose your Snowflake private key',
+      // Keys usually live in dot-directories such as ~/.ssh or ~/.snowflake.
+      properties: ['openFile', 'showHiddenFiles'],
+      filters: [
+        { name: 'Private keys (*.p8, *.pem)', extensions: ['p8', 'pem'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    },
+    requester
+  );
+  if (result.canceled) return null;
+  return result.filePaths[0] ?? null;
 }
 
 export async function testConnection(
@@ -391,6 +624,22 @@ export async function testConnection(
     password = stored;
   }
 
+  // Key-pair: `password` carries the key passphrase (see buildConnectOptions).
+  let keyFingerprint: string | undefined;
+  if (row.auth_method === 'keypair') {
+    try {
+      const keyPair = await prepareKeyPairAuth(profileId, row.private_key_path);
+      password = keyPair.passphrase;
+      keyFingerprint = keyPair.fingerprint;
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt
+      };
+    }
+  }
+
   const lite = rowToLite(row);
   const options: OpenSessionOptions = {};
   if (password !== undefined) options.password = password;
@@ -413,7 +662,7 @@ export async function testConnection(
     const raw = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      message: snowflakeErrorHint(raw),
+      message: snowflakeErrorHint(raw, keyFingerprint),
       durationMs: Date.now() - startedAt
     };
   } finally {
@@ -455,5 +704,24 @@ export function register(ipcMain: IpcMain): void {
   );
   ipcMain.handle(CHANNELS.connections.hasPassword, (_event, profileId: string) =>
     hasPasswordForProfile(profileId)
+  );
+  ipcMain.handle(CHANNELS.connections.pickPrivateKeyFile, (event) =>
+    pickPrivateKeyFile(event.sender)
+  );
+  ipcMain.handle(
+    CHANNELS.connections.checkPrivateKey,
+    (_event, filePath: string, passphrase?: string, profileId?: string) =>
+      checkPrivateKey(filePath, passphrase, profileId)
+  );
+  ipcMain.handle(
+    CHANNELS.connections.setPrivateKeyPassphrase,
+    (_event, profileId: string, passphrase: string) =>
+      setPrivateKeyPassphraseForProfile(profileId, passphrase)
+  );
+  ipcMain.handle(CHANNELS.connections.clearPrivateKeyPassphrase, (_event, profileId: string) =>
+    clearPrivateKeyPassphraseForProfile(profileId)
+  );
+  ipcMain.handle(CHANNELS.connections.hasPrivateKeyPassphrase, (_event, profileId: string) =>
+    hasPrivateKeyPassphraseForProfile(profileId)
   );
 }

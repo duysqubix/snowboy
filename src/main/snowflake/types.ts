@@ -18,7 +18,12 @@ export function asSessionId(value: string): SessionId {
   return value as SessionId;
 }
 
-export type SnowflakeAuthMethod = 'externalbrowser' | 'password_mfa' | 'password' | 'pat';
+export type SnowflakeAuthMethod =
+  | 'externalbrowser'
+  | 'password_mfa'
+  | 'password'
+  | 'pat'
+  | 'keypair';
 
 export interface ConnectionProfileLite {
   readonly id: string;
@@ -30,6 +35,8 @@ export interface ConnectionProfileLite {
   readonly accountUrl: string;
   readonly authMethod: SnowflakeAuthMethod;
   readonly username?: string;
+  /** PEM private key file for `keypair`; the SDK reads it at connect time. */
+  readonly privateKeyPath?: string;
   readonly defaultRole?: string;
   readonly defaultWarehouse?: string;
   readonly defaultDatabase?: string;

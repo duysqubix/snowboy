@@ -42,8 +42,12 @@ export function validateProfile(input: Partial<ConnectionProfile>): ValidationEr
 
   if (!input.authMethod) {
     errors.push({ field: 'authMethod', message: 'Auth method is required' });
-  } else if (!['externalbrowser', 'password_mfa', 'password', 'pat'].includes(input.authMethod)) {
+  } else if (
+    !['externalbrowser', 'password_mfa', 'password', 'pat', 'keypair'].includes(input.authMethod)
+  ) {
     errors.push({ field: 'authMethod', message: 'Invalid auth method' });
+  } else if (input.authMethod === 'keypair' && !input.privateKeyPath) {
+    errors.push({ field: 'privateKeyPath', message: 'Choose your private key file' });
   }
 
   if (!input.username || input.username.trim().length === 0) {

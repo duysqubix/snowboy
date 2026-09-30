@@ -3,10 +3,12 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
+  import { snowboy } from '../ipc/client';
   import { profiles } from '../stores/profiles.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { normalizeAccountUrl, validateProfile } from './validation';
-  import type { ConnectionProfile, AuthMethod } from '../../../main/types';
+  import { passphraseAction } from './keyPair';
+  import type { ConnectionProfile, AuthMethod, PrivateKeyCheck } from '../../../main/types';
   import { toast } from 'svelte-sonner';
 
   import { onMount, untrack } from 'svelte';
@@ -30,6 +32,17 @@
   let password = $state('');
   let passcode = $state('');
   let hasExistingPassword = $state(false);
+  let privateKeyPath = $state(untrack(() => profile?.privateKeyPath || ''));
+  let passphrase = $state('');
+  let hasStoredPassphrase = $state(false);
+  let keyCheck = $state<PrivateKeyCheck | null>(null);
+  let isPickingKey = $state(false);
+  // Set once the profile is in storage (edit mode, or after the first save in
+  // add mode), so a retry updates that profile instead of adding another.
+  let savedId = $state<string | null>(untrack(() => profile?.id ?? null));
+  let isSaving = $state(false);
+  // Numbers key checks so a slow, older result can't replace a newer one.
+  let keyCheckSeq = 0;
   let defaultRole = $state(untrack(() => profile?.defaultRole || ''));
   let defaultWarehouse = $state(untrack(() => profile?.defaultWarehouse || ''));
   let defaultDatabase = $state(untrack(() => profile?.defaultDatabase || ''));
@@ -43,6 +56,7 @@
   let needsPasscode = $derived(authMethod === 'password_mfa');
   let isPat = $derived(authMethod === 'pat');
   let secretLabel = $derived(isPat ? 'Personal Access Token' : 'Password');
+  let isKeyPair = $derived(authMethod === 'keypair');
 
   onMount(async () => {
     if (
@@ -57,6 +71,18 @@
         hasExistingPassword = false;
       }
     }
+    if (profile && profile.authMethod === 'keypair') {
+      try {
+        hasStoredPassphrase = await snowboy.connections.hasPrivateKeyPassphrase(profile.id);
+      } catch {
+        hasStoredPassphrase = false;
+      }
+      try {
+        await refreshKeyCheck();
+      } catch {
+        keyCheck = null;
+      }
+    }
   });
 
   let currentInput = $derived({
@@ -64,6 +90,7 @@
     accountUrl: normalizeAccountUrl(accountUrl),
     authMethod,
     username,
+    privateKeyPath: isKeyPair ? privateKeyPath : undefined,
     defaultRole,
     defaultWarehouse,
     defaultDatabase,
@@ -72,9 +99,9 @@
 
   let baseErrors = $derived(validateProfile(currentInput));
   let passwordError = $derived(
-    needsPassword && !profile && password.trim().length === 0
+    needsPassword && savedId === null && password.trim().length === 0
       ? `${secretLabel} is required`
-      : needsPassword && profile && !hasExistingPassword && password.trim().length === 0
+      : needsPassword && savedId !== null && !hasExistingPassword && password.trim().length === 0
         ? `No ${secretLabel} stored — enter one to enable this profile`
         : undefined
   );
@@ -91,6 +118,8 @@
 
   async function persistPasswordIfPresent(profileId: string): Promise<void> {
     if (!needsPassword) {
+      // Saving under a method without a password deletes the stored one in main.
+      hasExistingPassword = false;
       return;
     }
     if (password.trim().length > 0) {
@@ -100,27 +129,102 @@
     }
   }
 
-  async function persistProfileAndPassword(): Promise<ConnectionProfile> {
-    let savedProfile: ConnectionProfile;
-    if (profile) {
-      await profiles.update(profile.id, currentInput);
-      const found = profiles.list.find((p) => p.id === profile!.id);
-      if (!found) {
-        throw new Error('Saved profile vanished after refresh');
-      }
-      savedProfile = found;
-    } else {
-      savedProfile = await profiles.add(currentInput);
+  /**
+   * Parses the chosen key in main with the typed passphrase or, when
+   * editing, the stored one (which never comes back to the renderer).
+   */
+  async function refreshKeyCheck(): Promise<PrivateKeyCheck | null> {
+    const seq = ++keyCheckSeq;
+    if (privateKeyPath === '') {
+      keyCheck = null;
+      return null;
     }
-    await persistPasswordIfPresent(savedProfile.id);
-    return savedProfile;
+    const result = await snowboy.connections.checkPrivateKey(
+      privateKeyPath,
+      passphrase.length > 0 ? passphrase : undefined,
+      savedId ?? undefined
+    );
+    if (seq === keyCheckSeq) keyCheck = result;
+    return result;
+  }
+
+  async function handlePickKey() {
+    isPickingKey = true;
+    try {
+      const picked = await snowboy.connections.pickPrivateKeyFile();
+      if (picked !== null) {
+        privateKeyPath = picked;
+        await refreshKeyCheck();
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Could not open the private key file');
+    } finally {
+      isPickingKey = false;
+    }
+  }
+
+  // Re-checks with an emptied field too, so the status falls back to the
+  // stored passphrase (or asks for one) instead of going stale.
+  async function handlePassphraseBlur() {
+    if (privateKeyPath === '') return;
+    try {
+      await refreshKeyCheck();
+    } catch {
+      // Save checks the key again and reports any failure.
+    }
+  }
+
+  async function persistKeyPassphrase(
+    profileId: string,
+    check: PrivateKeyCheck | null
+  ): Promise<void> {
+    const action = passphraseAction(check, passphrase, hasStoredPassphrase);
+    if (action === 'store') {
+      await snowboy.connections.setPrivateKeyPassphrase(profileId, passphrase);
+      hasStoredPassphrase = true;
+    } else if (action === 'clear') {
+      await snowboy.connections.clearPrivateKeyPassphrase(profileId);
+      hasStoredPassphrase = false;
+    }
+  }
+
+  async function persistProfileAndSecrets(): Promise<ConnectionProfile> {
+    isSaving = true;
+    try {
+      // Refuse to save a key that doesn't parse with its passphrase.
+      const check = isKeyPair ? await refreshKeyCheck() : null;
+      if (check !== null && !check.ok) {
+        throw new Error(check.message);
+      }
+      let savedProfile: ConnectionProfile;
+      if (savedId !== null) {
+        const id = savedId;
+        await profiles.update(id, currentInput);
+        const found = profiles.list.find((p) => p.id === id);
+        if (!found) {
+          throw new Error('Saved profile vanished after refresh');
+        }
+        savedProfile = found;
+      } else {
+        savedProfile = await profiles.add(currentInput);
+        savedId = savedProfile.id;
+      }
+      await persistPasswordIfPresent(savedProfile.id);
+      await persistKeyPassphrase(savedProfile.id, check);
+      return savedProfile;
+    } finally {
+      // The passphrase lives in the secrets store now (or was rejected);
+      // don't keep it in component state either way.
+      passphrase = '';
+      isSaving = false;
+    }
   }
 
   async function handleSave() {
-    if (!isValid) return;
+    if (!isValid || isSaving) return;
 
     try {
-      await persistProfileAndPassword();
+      await persistProfileAndSecrets();
       onSave();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save profile');
@@ -128,7 +232,7 @@
   }
 
   async function handleSaveAndTest() {
-    if (!isValid) return;
+    if (!isValid || isSaving) return;
     if (needsPasscode && passcode.trim().length === 0) {
       toast.error('Enter the 6-digit MFA code from your authenticator app');
       return;
@@ -136,7 +240,7 @@
 
     let savedProfile: ConnectionProfile;
     try {
-      savedProfile = await persistProfileAndPassword();
+      savedProfile = await persistProfileAndSecrets();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save profile');
       return;
@@ -162,7 +266,7 @@
   }
 
   async function handleSaveAndConnect() {
-    if (!isValid) return;
+    if (!isValid || isSaving) return;
     if (needsPasscode && passcode.trim().length === 0) {
       toast.error('Enter the 6-digit MFA code from your authenticator app');
       return;
@@ -170,7 +274,7 @@
 
     let savedProfile: ConnectionProfile;
     try {
-      savedProfile = await persistProfileAndPassword();
+      savedProfile = await persistProfileAndSecrets();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save profile');
       return;
@@ -201,7 +305,8 @@
     { value: 'externalbrowser', label: 'SSO (External Browser)' },
     { value: 'password_mfa', label: 'Password + MFA' },
     { value: 'password', label: 'Password' },
-    { value: 'pat', label: 'Personal Access Token (PAT)' }
+    { value: 'pat', label: 'Personal Access Token (PAT)' },
+    { value: 'keypair', label: 'Key pair (private key file)' }
   ];
 
   let selectedAuthOption = $derived(authOptions.find(o => o.value === authMethod) || authOptions[0]);
@@ -287,7 +392,7 @@
               : 'Snowflake account password'}
           autocomplete={isPat ? 'off' : 'current-password'}
         />
-        {#if profile && hasExistingPassword}
+        {#if savedId !== null && hasExistingPassword}
           <p class="text-xs text-muted-foreground">
             A {secretLabel} is already stored for this profile. Type a new one to replace it.
           </p>
@@ -300,6 +405,76 @@
         {/if}
         {#if getError('password')}
           <p class="text-xs text-destructive">{getError('password')}</p>
+        {/if}
+      </div>
+    {/if}
+
+    {#if isKeyPair}
+      <div class="space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <Label for="privateKeyPath">Private key file *</Label>
+          <a
+            href="https://docs.snowflake.com/en/user-guide/key-pair-auth"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-xs text-primary hover:underline"
+            title="How to set up key-pair authentication in Snowflake"
+          >
+            How to set up key-pair auth ↗
+          </a>
+        </div>
+        <div class="flex items-center gap-2">
+          <Input
+            id="privateKeyPath"
+            value={privateKeyPath}
+            readonly
+            placeholder="No file chosen"
+            title={privateKeyPath}
+            class="font-mono text-xs"
+          />
+          <Button
+            variant="outline"
+            class="shrink-0"
+            onclick={handlePickKey}
+            disabled={isPickingKey || isTesting || isSaving}
+          >
+            Browse…
+          </Button>
+        </div>
+        {#if getError('privateKeyPath')}
+          <p class="text-xs text-destructive">{getError('privateKeyPath')}</p>
+        {:else if keyCheck?.ok}
+          <p class="text-xs text-muted-foreground">
+            {keyCheck.encrypted ? 'Encrypted' : 'Unencrypted'} RSA key. Public key fingerprint:
+            <span class="break-all font-mono">{keyCheck.fingerprint}</span>
+          </p>
+        {:else if keyCheck && !keyCheck.ok}
+          <p
+            class="text-xs {keyCheck.problem === 'passphrase_required'
+              ? 'text-muted-foreground'
+              : 'text-destructive'}"
+          >
+            {keyCheck.message}
+          </p>
+        {/if}
+      </div>
+
+      <div class="space-y-2">
+        <Label for="passphrase">Key passphrase</Label>
+        <Input
+          id="passphrase"
+          type="password"
+          bind:value={passphrase}
+          onblur={handlePassphraseBlur}
+          placeholder={hasStoredPassphrase
+            ? 'Leave blank to keep the stored passphrase'
+            : 'Only if the key is encrypted'}
+          autocomplete="off"
+        />
+        {#if savedId !== null && hasStoredPassphrase}
+          <p class="text-xs text-muted-foreground">
+            A passphrase is stored for this profile. Type a new one to replace it.
+          </p>
         {/if}
       </div>
     {/if}
@@ -346,12 +521,18 @@
   </div>
 
   <div class="flex items-center justify-end gap-2 pt-4 border-t mt-auto">
-    <Button variant="outline" onclick={onCancel} disabled={isTesting}>Cancel</Button>
-    <Button variant="secondary" onclick={handleSave} disabled={!isValid || isTesting}>Save</Button>
-    <Button variant="outline" onclick={handleSaveAndTest} disabled={!isValid || isTesting}>
+    <Button variant="outline" onclick={onCancel} disabled={isTesting || isSaving}>Cancel</Button>
+    <Button variant="secondary" onclick={handleSave} disabled={!isValid || isTesting || isSaving}>
+      Save
+    </Button>
+    <Button
+      variant="outline"
+      onclick={handleSaveAndTest}
+      disabled={!isValid || isTesting || isSaving}
+    >
       {isTesting ? 'Testing...' : 'Save & Test'}
     </Button>
-    <Button onclick={handleSaveAndConnect} disabled={!isValid || isTesting}>
+    <Button onclick={handleSaveAndConnect} disabled={!isValid || isTesting || isSaving}>
       {isTesting ? 'Connecting...' : 'Save & Connect'}
     </Button>
   </div>

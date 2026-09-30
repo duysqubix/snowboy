@@ -11,6 +11,7 @@ import type {
   LayoutTree,
   LayoutTreeSerialized,
   ObjectRef,
+  PrivateKeyCheck,
   QueryCompleteEvent,
   QueryErrorEvent,
   QueryId,
@@ -129,7 +130,21 @@ const api = {
     clearPassword: (profileId: string): Promise<void> =>
       ipcRenderer.invoke(CHANNELS.connections.clearPassword, profileId),
     hasPassword: (profileId: string): Promise<boolean> =>
-      ipcRenderer.invoke(CHANNELS.connections.hasPassword, profileId)
+      ipcRenderer.invoke(CHANNELS.connections.hasPassword, profileId),
+    pickPrivateKeyFile: (): Promise<string | null> =>
+      ipcRenderer.invoke(CHANNELS.connections.pickPrivateKeyFile),
+    checkPrivateKey: (
+      path: string,
+      passphrase?: string,
+      profileId?: string
+    ): Promise<PrivateKeyCheck> =>
+      ipcRenderer.invoke(CHANNELS.connections.checkPrivateKey, path, passphrase, profileId),
+    setPrivateKeyPassphrase: (profileId: string, passphrase: string): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.connections.setPrivateKeyPassphrase, profileId, passphrase),
+    clearPrivateKeyPassphrase: (profileId: string): Promise<void> =>
+      ipcRenderer.invoke(CHANNELS.connections.clearPrivateKeyPassphrase, profileId),
+    hasPrivateKeyPassphrase: (profileId: string): Promise<boolean> =>
+      ipcRenderer.invoke(CHANNELS.connections.hasPrivateKeyPassphrase, profileId)
   },
   sessions: {
     open: (
