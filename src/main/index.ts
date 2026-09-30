@@ -1,60 +1,87 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, dialog, session, shell, type WebContents } from 'electron';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from './ipc/channels';
 import { registerIpc } from './ipc/index';
 import { closeAllSessions } from './ipc/sessions';
 import { waitForRendererFlush } from './ipc/workspace';
+import { isAppUrl, isPermissionAllowed, safeExternalUrl } from './security';
 import { closeDatabase, openDatabase } from './storage/db';
 import { EMBEDDED_MIGRATIONS } from './storage/embedded-migrations';
 
 console.log('[main] snowboy starting');
 
-const moduleDir = typeof __dirname === 'string'
-  ? __dirname
-  : fileURLToPath(new URL('.', import.meta.url));
+const moduleDir =
+  typeof __dirname === 'string' ? __dirname : fileURLToPath(new URL('.', import.meta.url));
 
-/**
- * T0.2 smoke gate: prove that `snowflake-sdk` (pure JS) and `better-sqlite3`
- * (native, must be ABI-compatible with Electron's bundled Node) both load
- * inside Electron's main process. Failing here means a packaging / rebuild
- * problem and the rest of the app cannot function — exit immediately so
- * developers see the issue instead of cascading failures downstream.
- */
-async function smokeLoadNatives(): Promise<void> {
+const rendererIndex = join(moduleDir, '../renderer/index.html');
+// electron-vite's dev server. An installed app ignores it, so the environment
+// can't point it at other content.
+const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'];
+// The only page a window may show. Navigation, permission and IPC checks all
+// compare against it (see security.ts).
+const appUrl = devServerUrl ?? pathToFileURL(rendererIndex).href;
+
+let mainWindow: BrowserWindow | null = null;
+/** Set once the before-quit shutdown starts; see `second-instance`. */
+let quitting = false;
+
+/** Scheme and host only: the rest of a blocked URL may hold a token or a local path. */
+function urlForLog(url: string): string {
   try {
-    type SnowflakeNamespace = typeof import('snowflake-sdk');
-    const snowflakeMod = (await import('snowflake-sdk')) as unknown as
-      SnowflakeNamespace & { default?: SnowflakeNamespace };
-    const snowflake: SnowflakeNamespace = snowflakeMod.default ?? snowflakeMod;
-    if (typeof snowflake.createConnection !== 'function') {
-      throw new Error('snowflake-sdk loaded but createConnection is not a function');
-    }
-
-    const sqliteMod = await import('better-sqlite3');
-    const Database = sqliteMod.default;
-    if (typeof Database !== 'function') {
-      throw new Error('better-sqlite3 loaded but its default export is not a constructor');
-    }
-    const db = new Database(':memory:');
-    try {
-      const row = db.prepare('SELECT 1 AS x').get() as { x?: number } | undefined;
-      if (!row || row.x !== 1) {
-        throw new Error(`better-sqlite3 SELECT 1 returned unexpected value: ${JSON.stringify(row)}`);
-      }
-    } finally {
-      db.close();
-    }
-
-    console.log('[main] natives ok');
-  } catch (err) {
-    console.error('[main] natives FAILED');
-    console.error(err);
-    app.exit(1);
+    const { protocol, host } = new URL(url);
+    return `${protocol}//${host}`;
+  } catch {
+    return 'an invalid URL';
   }
 }
 
-function createWindow(): void {
+/**
+ * Applied to every webContents as it's created: it may only show the app,
+ * can't open windows or attach a <webview>, and hands https links (the
+ * connection wizard's docs links) to the system browser.
+ */
+function hardenWebContents(contents: WebContents): void {
+  const stayInApp = (event: { url: string; preventDefault: () => void }): void => {
+    if (isAppUrl(event.url, appUrl)) return;
+    event.preventDefault();
+    console.warn(`[main] blocked navigation to ${urlForLog(event.url)}`);
+  };
+  contents.on('will-navigate', stayInApp);
+  contents.on('will-redirect', stayInApp);
+  contents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+    console.warn('[main] blocked a <webview>');
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    const external = safeExternalUrl(url);
+    if (external === null) {
+      console.warn(`[main] blocked a new window for ${urlForLog(url)}`);
+    } else {
+      setImmediate(() => {
+        shell.openExternal(external).catch((err: unknown) => {
+          console.warn(`[main] could not open ${urlForLog(external)}: ${String(err)}`);
+        });
+      });
+    }
+    return { action: 'deny' };
+  });
+}
+
+/** Electron grants every web permission by default; allow only what security.ts lists. */
+function installPermissionHandlers(): void {
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
+    const allowed = isPermissionAllowed(permission, details.requestingUrl, appUrl);
+    if (!allowed) console.warn(`[main] denied permission request: ${permission}`);
+    callback(allowed);
+  });
+  session.defaultSession.setPermissionCheckHandler((_contents, permission, _origin, details) =>
+    isPermissionAllowed(permission, details.requestingUrl, appUrl)
+  );
+}
+
+/** Resolves once the renderer has loaded, and rejects if it can't. */
+async function createWindow(): Promise<void> {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -64,11 +91,18 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
-      preload: join(moduleDir, '../preload/index.mjs'),
+      // CommonJS: a sandboxed preload runs as a plain script, not an ES module.
+      preload: join(moduleDir, '../preload/index.cjs'),
       contextIsolation: true,
-      sandbox: false,
-      nodeIntegration: false
+      sandbox: true,
+      nodeIntegration: false,
+      // SNOWBOY_DEVTOOLS=1 turns DevTools back on in an installed app, for debugging.
+      devTools: !app.isPackaged || process.env['SNOWBOY_DEVTOOLS'] === '1'
     }
+  });
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
   });
 
   win.once('ready-to-show', () => {
@@ -78,50 +112,122 @@ function createWindow(): void {
     }
   });
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: 'deny' };
+  let closing = false;
+  win.once('close', () => {
+    closing = true;
   });
-
-  const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (rendererUrl) {
-    void win.loadURL(rendererUrl);
-  } else {
-    void win.loadFile(join(moduleDir, '../renderer/index.html'));
-  }
 
   console.log('[main] window created');
+  try {
+    await (devServerUrl ? win.loadURL(devServerUrl) : win.loadFile(rendererIndex));
+  } catch (err) {
+    // Closed or quit during the load, which rejects before the window is
+    // destroyed; not a failed start.
+    if (closing || win.isDestroyed()) return;
+    // Electron rejects with ERR_ABORTED once another navigation starts, even
+    // one the guard then blocks, or Vite's dependency reload in dev. The window
+    // still ends up on the app, so that isn't a failed start either.
+    if (!(err instanceof Error && 'code' in err && err.code === 'ERR_ABORTED')) throw err;
+  }
+  // The IPC guard answers only appUrl, so a page it didn't recognise would get
+  // nothing from main. Fail here instead, where the reason can be shown.
+  const shown = win.webContents.getURL();
+  if (!isAppUrl(shown, appUrl)) {
+    throw new Error(`The window shows ${shown}, which doesn't match the app's ${appUrl}`);
+  }
 }
 
-void app.whenReady().then(async () => {
-  await smokeLoadNatives();
+async function startup(): Promise<void> {
+  // better-sqlite3 loads here, so a broken native module fails startup too.
+  // snowflake-sdk loads later, when the first session opens.
   openDatabase({ migrations: EMBEDDED_MIGRATIONS });
   console.log('[main] storage ready');
-  registerIpc();
-  createWindow();
+  installPermissionHandlers();
+  registerIpc(appUrl);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      createWindow().catch((err: unknown) => {
+        console.error('[main] could not reopen the window', err);
+      });
     }
   });
-});
+  await createWindow();
+}
+
+/** Explains a failed startup and exits, instead of leaving a process with no window. */
+function failStartup(err: unknown): void {
+  console.error('[main] startup failed', err);
+  try {
+    const reason = err instanceof Error ? err.message : String(err);
+    dialog.showErrorBox(
+      'Snowboy failed to start',
+      `${reason}\n\nSnowboy keeps its data in:\n${app.getPath('userData')}`
+    );
+  } finally {
+    app.exit(1);
+  }
+}
+
+if (!app.requestSingleInstanceLock()) {
+  // Another Snowboy has this profile (userData) open. It shows its window when
+  // `second-instance` fires, and two processes must not share the stores.
+  console.log('[main] Snowboy is already running; exiting');
+  app.exit(0);
+} else {
+  app.on('second-instance', () => {
+    // This process is shutting down and can't show a window, but it still holds
+    // the lock, so the new launch has exited. Start a fresh one once this exits.
+    if (quitting) {
+      app.relaunch();
+      return;
+    }
+    if (mainWindow === null) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+  app.on('web-contents-created', (_event, contents) => {
+    hardenWebContents(contents);
+  });
+  void app.whenReady().then(startup).catch(failStartup);
+}
+
+/** Waits up to `ms` for `work`; false if it was still running. A rejection is rethrown. */
+async function doneWithin(ms: number, work: Promise<unknown>): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([work.then(() => true), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 let shutdownComplete = false;
 
 app.on('before-quit', (event) => {
   if (shutdownComplete) return;
   event.preventDefault();
+  if (quitting) return;
+  quitting = true;
+  // Kept short: until this process exits it holds the single-instance lock, so
+  // a relaunch meanwhile only reaches `second-instance`.
   void (async () => {
     try {
-      for (const win of BrowserWindow.getAllWindows()) {
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
         try {
           win.webContents.send(CHANNELS.workspaceEvents.requestFlush);
         } catch (err) {
           console.warn('[main] before-quit: requestFlush send failed', err);
         }
       }
-      await waitForRendererFlush(2000);
-      await closeAllSessions();
+      // Closing the last window quits with none left, and then nothing can ack.
+      if (windows.length > 0) await waitForRendererFlush(2000);
+      if (!(await doneWithin(3000, closeAllSessions()))) {
+        console.warn('[main] before-quit: sessions still closing after 3 s; quitting anyway');
+      }
     } catch (err) {
       console.warn('[main] before-quit: orchestrated shutdown error', err);
     } finally {

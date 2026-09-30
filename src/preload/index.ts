@@ -1,3 +1,9 @@
+/**
+ * The window's preload runs sandboxed (`webPreferences.sandbox`), as one
+ * CommonJS file built by electron-vite. Its `require` loads only `electron`,
+ * so anything else must be bundled in. Node built-ins are unavailable, and so
+ * are `Buffer` and `setImmediate` from Electron 45 on; use web APIs instead.
+ */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { CHANNELS } from '../main/ipc/channels';
 import type {
