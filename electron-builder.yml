@@ -29,6 +29,24 @@ asarUnpack:
   # snowflake-sdk's optional sf_mini_core addon; the SDK runs without it if it fails to load.
   - 'node_modules/snowflake-sdk/dist/lib/minicore/binaries/*.node'
 
+# Flipped in the packaged Electron binary before signing.
+# https://www.electron.build/tutorials/adding-electron-fuses
+# https://www.electronjs.org/docs/latest/tutorial/fuses
+# The dev and e2e flows run node_modules/electron, which keeps the defaults.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  # Enforced on Windows and macOS, where electron-builder embeds the asar hash.
+  # Electron compiles the check out on Linux, so the fuse is inert there.
+  enableEmbeddedAsarIntegrityValidation: true
+  enableCookieEncryption: true
+  # Must stay on while the renderer loads with loadFile(): Electron serves file:// from
+  # inside app.asar only when this fuse is on (off: ERR_FILE_NOT_FOUND, blank window).
+  # Turning it off needs the renderer served from a custom protocol instead.
+  grantFileProtocolExtraPrivileges: true
+
 linux:
   target:
     - target: AppImage
