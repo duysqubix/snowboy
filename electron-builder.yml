@@ -1,0 +1,69 @@
+# electron-builder 26 configuration: https://www.electron.build/configuration
+# Run through `bun run build:linux` / `build:win` / `build:mac`, which build out/ first.
+appId: com.snowboy.app
+productName: Snowboy
+# 1024x1024 PNG. electron-builder converts it to the Windows .ico; Linux packages get it
+# as-is (hicolor/1024x1024), with no smaller sizes generated.
+icon: resources/icon.png
+directories:
+  output: dist
+
+# `files` lives in each platform section below, never at the top level. electron-builder
+# keeps a top-level list and a platform list as separate matchers, and a platform list of
+# only `!` patterns then matches the whole project (src/, tests/, docs, local state).
+# Each list: the electron-vite bundles, runtime resources and package.json. The production
+# `dependencies` tree is always added, and the `!` patterns also filter it.
+# https://www.electron.build/contents#files
+
+# better-sqlite3 13 and snowflake-sdk ship Node-API binaries inside their npm packages,
+# so there is nothing to rebuild. Left on, electron-builder runs @electron/rebuild, which
+# sends better-sqlite3 13 to node-gyp: a compiler toolchain, and no cross-compiling.
+npmRebuild: false
+
+# Unpack only the native binaries (Electron loads .node files from app.asar.unpacked).
+# smartUnpack would unpack both packages whole, moving their JS out of the asar.
+asar:
+  smartUnpack: false
+asarUnpack:
+  - 'node_modules/better-sqlite3/prebuilds/**'
+  # snowflake-sdk's optional sf_mini_core addon; the SDK runs without it if it fails to load.
+  - 'node_modules/snowflake-sdk/dist/lib/minicore/binaries/*.node'
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Development
+  files:
+    - 'out/{main,preload,renderer}/**'
+    - 'resources/**'
+    - 'package.json'
+    # better-sqlite3's C sources (~10 MB); the app loads only its prebuilds.
+    - '!**/node_modules/better-sqlite3/{deps,src}/**'
+    # Only this target's binaries (glibc; Electron itself doesn't run on musl).
+    - '!**/node_modules/better-sqlite3/prebuilds/!(linux-${arch}).node'
+    - '!**/node_modules/snowflake-sdk/dist/lib/minicore/binaries/!(*.linux-${arch}-gnu).node'
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  files:
+    - 'out/{main,preload,renderer}/**'
+    - 'resources/**'
+    - 'package.json'
+    - '!**/node_modules/better-sqlite3/{deps,src}/**'
+    - '!**/node_modules/better-sqlite3/prebuilds/!(win32-${arch}).node'
+    - '!**/node_modules/snowflake-sdk/dist/lib/minicore/binaries/!(*.win32-${arch}-msvc).node'
+
+# Not built or tested yet; keeps both darwin architectures so a universal build still merges.
+mac:
+  files:
+    - 'out/{main,preload,renderer}/**'
+    - 'resources/**'
+    - 'package.json'
+    - '!**/node_modules/better-sqlite3/{deps,src}/**'
+    - '!**/node_modules/better-sqlite3/prebuilds/!(darwin-*).node'
+    - '!**/node_modules/snowflake-sdk/dist/lib/minicore/binaries/!(*.darwin-*).node'
