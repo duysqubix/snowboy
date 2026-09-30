@@ -254,6 +254,21 @@ describe('Session.open', () => {
     }
   });
 
+  test('setContext rejects an empty identifier before issuing any USE statement', async () => {
+    const ctl = makeFakeSdk();
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      await expect(session.setContext({ role: 'SYSADMIN', warehouse: '' })).rejects.toThrow(
+        'quoteIdent: identifier is empty',
+      );
+      const uses = ctl.log.filter((e) => e.kind === 'execute' && e.sql?.startsWith('USE '));
+      expect(uses).toHaveLength(0);
+      expect(session.getContext()).toEqual({});
+    } finally {
+      await session.close();
+    }
+  });
+
   test('propagates SDK connect errors', async () => {
     const ctl = makeFakeSdk({ connectError: new Error('AUTH_FAILED') });
     await expect(
@@ -491,6 +506,22 @@ describe('Session.runStreaming', () => {
       );
       expect(cancelExecs).toHaveLength(1);
       expect(cancelExecs[0]?.sql).toBe("SELECT SYSTEM$CANCEL_QUERY('evil''id')");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("cancelQuery method escapes backslashes so \\' cannot end the literal early", async () => {
+    const ctl = makeFakeSdk();
+    const session = await Session.open(profileFixture(), {}, { password: 'pw', sdk: ctl.sdk });
+    try {
+      await session.cancelQuery("evil\\')--");
+      const cancelExecs = ctl.log.filter(
+        (e) => e.kind === 'execute' && typeof e.sql === 'string' && e.sql.includes('SYSTEM$CANCEL_QUERY'),
+      );
+      expect(cancelExecs).toHaveLength(1);
+      // String.raw keeps the backslashes literal: this is the exact SQL text Snowflake receives.
+      expect(cancelExecs[0]?.sql).toBe(String.raw`SELECT SYSTEM$CANCEL_QUERY('evil\\'')--')`);
     } finally {
       await session.close();
     }

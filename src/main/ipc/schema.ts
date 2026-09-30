@@ -41,6 +41,7 @@
 import type { IpcMain } from 'electron';
 import { CHANNELS } from './channels';
 import type { Session } from '../snowflake/session';
+import { quoteIdent, sqlStringLiteral } from '../snowflake/sqlText';
 import type { ColumnMeta } from '../snowflake/types';
 import type { Column, ListObjectsOptions, ObjectRef, SchemaObject, SessionId } from '../types';
 import { onSessionClose, requireSession } from './sessions';
@@ -94,14 +95,6 @@ async function getOrFetch<T>(
 // ---------------------------------------------------------------------------
 // SQL helpers
 // ---------------------------------------------------------------------------
-
-function quoteIdent(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
-function quoteSqlLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
 
 function quoteQualifiedName(database: string, schema: string, name: string): string {
   return `${quoteIdent(database)}.${quoteIdent(schema)}.${quoteIdent(name)}`;
@@ -274,8 +267,8 @@ async function fetchColumns(
   const sql =
     `SELECT column_name, data_type, is_nullable, comment ` +
     `FROM ${quoteIdent(obj.database)}.INFORMATION_SCHEMA.COLUMNS ` +
-    `WHERE table_schema = ${quoteSqlLiteral(obj.schema)} ` +
-    `AND table_name = ${quoteSqlLiteral(obj.name)} ` +
+    `WHERE table_schema = ${sqlStringLiteral(obj.schema)} ` +
+    `AND table_name = ${sqlStringLiteral(obj.name)} ` +
     `ORDER BY ordinal_position`;
   const { rows, columns } = await runQueryRows(session, sql);
   const nameIdx = requireColumnIndex(columns, 'column_name', 'schema.getColumns');
@@ -333,7 +326,7 @@ async function fetchDDL(session: Session, obj: ObjectRef): Promise<string> {
       : obj.kind === 'schema'
         ? `${quoteIdent(obj.database)}.${quoteIdent(obj.name)}`
         : quoteQualifiedName(obj.database, obj.schema, obj.name);
-  const sql = `SELECT GET_DDL(${quoteSqlLiteral(ddlKind)}, ${quoteSqlLiteral(targetForDdl)})`;
+  const sql = `SELECT GET_DDL(${sqlStringLiteral(ddlKind)}, ${sqlStringLiteral(targetForDdl)})`;
   const { rows, columns } = await runQueryRows(session, sql);
   if (rows.length === 0 || columns.length === 0) {
     return '';

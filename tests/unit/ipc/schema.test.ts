@@ -480,6 +480,74 @@ describe('getColumns', () => {
       executed[0]?.includes("table_schema = 'O''REILLY' AND table_name = 'CUST''S'")
     ).toBe(true);
   });
+
+  // String.raw keeps backslashes literal, so the expected SQL reads exactly as Snowflake
+  // receives it. Snowflake string constants honour backslash escapes, so `\` must be doubled.
+  test("escapes backslashes in schema/name so a\\ and a\\'b cannot end the literal early", async () => {
+    seedProfile();
+    const id = await openWithStubs([
+      {
+        match: /INFORMATION_SCHEMA\.COLUMNS/,
+        result: {
+          columns: [
+            { name: 'column_name', type: 'VARCHAR', nullable: false },
+            { name: 'data_type', type: 'VARCHAR', nullable: false },
+            { name: 'is_nullable', type: 'VARCHAR', nullable: false }
+          ],
+          rows: []
+        }
+      }
+    ]);
+
+    await getColumns(id, {
+      database: 'DB',
+      schema: 'a\\',
+      name: String.raw`a\'b`,
+      kind: 'table'
+    });
+
+    expect(executed[0]).toBe(
+      String.raw`SELECT column_name, data_type, is_nullable, comment FROM "DB".INFORMATION_SCHEMA.COLUMNS WHERE table_schema = 'a\\' AND table_name = 'a\\''b' ORDER BY ordinal_position`
+    );
+  });
+
+  test('rejects an empty database with a clear error before sending any SQL', async () => {
+    seedProfile();
+    const id = await openWithStubs([]);
+
+    await expect(
+      getColumns(id, { database: '', schema: 'PUBLIC', name: 'T', kind: 'table' })
+    ).rejects.toThrow('quoteIdent: identifier is empty');
+    expect(executed).toEqual([]);
+  });
+
+  test('keeps the backslash in a\\z instead of letting Snowflake drop it', async () => {
+    seedProfile();
+    const id = await openWithStubs([
+      {
+        match: /INFORMATION_SCHEMA\.COLUMNS/,
+        result: {
+          columns: [
+            { name: 'column_name', type: 'VARCHAR', nullable: false },
+            { name: 'data_type', type: 'VARCHAR', nullable: false },
+            { name: 'is_nullable', type: 'VARCHAR', nullable: false }
+          ],
+          rows: []
+        }
+      }
+    ]);
+
+    await getColumns(id, {
+      database: 'DB',
+      schema: "O'Reilly",
+      name: String.raw`a\z`,
+      kind: 'table'
+    });
+
+    expect(executed[0]).toContain(
+      String.raw`WHERE table_schema = 'O''Reilly' AND table_name = 'a\\z' ORDER BY`
+    );
+  });
 });
 
 describe('getDDL', () => {
@@ -537,6 +605,77 @@ describe('getDDL', () => {
       kind: 'schema'
     });
     expect(ddl).toContain('create or replace schema');
+  });
+
+  test("escapes quotes and backslashes in the GET_DDL name literal (O'Reilly, a\\z)", async () => {
+    seedProfile();
+    const id = await openWithStubs([
+      {
+        match: /^SELECT GET_DDL/,
+        result: {
+          columns: [{ name: 'GET_DDL(...)', type: 'VARCHAR', nullable: true }],
+          rows: [['create or replace TABLE ...;']]
+        }
+      }
+    ]);
+
+    await getDDL(id, {
+      database: 'DB',
+      schema: "O'Reilly",
+      name: String.raw`a\z`,
+      kind: 'table'
+    });
+
+    expect(executed[0]).toBe(String.raw`SELECT GET_DDL('TABLE', '"DB"."O''Reilly"."a\\z"')`);
+  });
+
+  test('database DDL ignores the empty schema field the object browser sends', async () => {
+    seedProfile();
+    const id = await openWithStubs([
+      {
+        match: /^SELECT GET_DDL/,
+        result: {
+          columns: [{ name: 'GET_DDL(...)', type: 'VARCHAR', nullable: true }],
+          rows: [['create or replace database DB;']]
+        }
+      }
+    ]);
+
+    await getDDL(id, { database: 'DB', schema: '', name: 'DB', kind: 'database' });
+
+    expect(executed).toEqual([`SELECT GET_DDL('DATABASE', '"DB"')`]);
+  });
+
+  test('rejects an empty path part with a clear error before sending any SQL', async () => {
+    seedProfile();
+    const id = await openWithStubs([]);
+
+    await expect(
+      getDDL(id, { database: 'DB', schema: '', name: 'T', kind: 'table' })
+    ).rejects.toThrow('quoteIdent: identifier is empty');
+    expect(executed).toEqual([]);
+  });
+
+  test("a\\ and a\\'b cannot end the GET_DDL name literal early", async () => {
+    seedProfile();
+    const id = await openWithStubs([
+      {
+        match: /^SELECT GET_DDL/,
+        result: {
+          columns: [{ name: 'GET_DDL(...)', type: 'VARCHAR', nullable: true }],
+          rows: [['create or replace TABLE ...;']]
+        }
+      }
+    ]);
+
+    await getDDL(id, {
+      database: 'DB',
+      schema: 'a\\',
+      name: String.raw`a\'b`,
+      kind: 'table'
+    });
+
+    expect(executed[0]).toBe(String.raw`SELECT GET_DDL('TABLE', '"DB"."a\\"."a\\''b"')`);
   });
 
   test('returns empty string when the result has no rows', async () => {

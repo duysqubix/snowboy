@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { buildConnectOptions } from './auth';
+import { quoteIdent, sqlStringLiteral } from './sqlText';
 import {
   type ColumnMeta,
   type ConnectionProfileLite,
@@ -61,10 +62,6 @@ async function defaultSnowflakeSdk(): Promise<SnowflakeSdkLike> {
     throw new Error('snowflake-sdk did not expose createConnection');
   }
   return { createConnection: ns.createConnection };
-}
-
-function quoteIdent(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
 }
 
 function effectiveColumnIndex(columns: readonly ColumnMeta[], name: string): number {
@@ -237,8 +234,7 @@ export class Session {
     if (queryId === '') {
       throw new Error('cancelQuery: queryId is empty');
     }
-    const escaped = queryId.replace(/'/g, "''");
-    await this.executePromise(`SELECT SYSTEM$CANCEL_QUERY('${escaped}')`);
+    await this.executePromise(`SELECT SYSTEM$CANCEL_QUERY(${sqlStringLiteral(queryId)})`);
   }
 
   async close(): Promise<void> {
