@@ -15,7 +15,10 @@ export default [
       'coverage/**',
       'test-results/**',
       'playwright-report/**',
-      '.sisyphus/**'
+      '.sisyphus/**',
+      // Claude Code workspace, including agent git worktrees (.claude/worktrees/*)
+      // that carry their own node_modules and out/ build output.
+      '.claude/**'
     ]
   },
   js.configs.recommended,

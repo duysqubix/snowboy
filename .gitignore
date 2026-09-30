@@ -38,5 +38,8 @@ electron.vite.config.*.mjs
 
 .sisyphus/run-continuation/
 
+# Claude Code agent worktrees (temporary git worktrees created inside the repo)
+.claude/worktrees/
+
 # Local SQLite databases (any stray *.db, not just snowboy.db)
 *.db
