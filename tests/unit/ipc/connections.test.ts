@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { IpcMain, OpenDialogOptions } from 'electron';
@@ -917,6 +917,27 @@ describe('key-pair auth (M2.1b)', () => {
     test('returns null when the dialog is cancelled', async () => {
       __setOpenDialogForTesting(async () => ({ canceled: true, filePaths: [] }));
       expect(await pickPrivateKeyFile()).toBeNull();
+    });
+
+    test('opens in the home folder, then in the folder of the last chosen key', async () => {
+      // Electron 43+ opens dialogs in Downloads unless given a defaultPath.
+      const startFolders: (string | undefined)[] = [];
+      // One pick per call; an empty pick is a cancel.
+      const picks = [['/home/me/.snowflake/rsa_key.p8'], [], ['/keys/other/k.p8'], []];
+      __setOpenDialogForTesting(async (options) => {
+        startFolders.push(options.defaultPath);
+        const filePaths = picks.shift() ?? [];
+        return { canceled: filePaths.length === 0, filePaths };
+      });
+
+      for (let call = 0; call < 4; call++) await pickPrivateKeyFile();
+
+      expect(startFolders).toEqual([
+        homedir(),
+        '/home/me/.snowflake',
+        '/home/me/.snowflake',
+        '/keys/other'
+      ]);
     });
 
     test('register() wires the picker and the other key-pair channels', async () => {

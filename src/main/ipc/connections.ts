@@ -38,7 +38,8 @@
  */
 
 import { createRequire } from 'node:module';
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute } from 'node:path';
 import type {
   BrowserWindow,
   Dialog,
@@ -205,9 +206,20 @@ function defaultOpenDialog(
 
 let openDialog: OpenDialogFn = defaultOpenDialog;
 
-/** Test-only: install a fake open dialog. Pass `null` to restore Electron's. */
+/**
+ * Folder of the last key picked this session; the picker starts there, or in the
+ * home folder. Since Electron 43 a dialog without a `defaultPath` opens in
+ * Downloads, and the OS no longer remembers the last folder.
+ */
+let lastKeyFolder: string | undefined;
+
+/**
+ * Test-only: install a fake open dialog, and forget the last key folder. Pass
+ * `null` to restore Electron's.
+ */
 export function __setOpenDialogForTesting(fn: OpenDialogFn | null): void {
   openDialog = fn ?? defaultOpenDialog;
+  lastKeyFolder = undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +564,9 @@ export async function pickPrivateKeyFile(
   const result = await openDialog(
     {
       title: 'Choose your Snowflake private key',
+      defaultPath: lastKeyFolder ?? homedir(),
       // Keys usually live in dot-directories such as ~/.ssh or ~/.snowflake.
+      // Linux ignores this since Electron 43; GTK users toggle it with Ctrl+H.
       properties: ['openFile', 'showHiddenFiles'],
       filters: [
         { name: 'Private keys (*.p8, *.pem)', extensions: ['p8', 'pem'] },
@@ -562,7 +576,9 @@ export async function pickPrivateKeyFile(
     requester
   );
   if (result.canceled) return null;
-  return result.filePaths[0] ?? null;
+  const picked = result.filePaths[0] ?? null;
+  if (picked !== null) lastKeyFolder = dirname(picked);
+  return picked;
 }
 
 export async function testConnection(
