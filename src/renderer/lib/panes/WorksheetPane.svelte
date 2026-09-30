@@ -1,7 +1,27 @@
+<script lang="ts" module>
+  import { SvelteSet } from 'svelte/reactivity';
+
+  // Panes with a run in flight. Module-level because a run outlives its
+  // component: switching tabs or splitting remounts the pane mid-run.
+  const runningPanes = new SvelteSet<string>();
+
+  // The role, warehouse and database lists are per session, not per pane.
+  // Shared here so a remount (tab switch, split) doesn't re-run SHOW ROLES
+  // and SHOW WAREHOUSES.
+  const sessionLists = $state({
+    roles: [] as string[],
+    warehouses: [] as string[],
+    databases: [] as string[]
+  });
+  let sessionListsFor: string | null = null;
+</script>
+
 <script lang="ts">
-  import { getContext, onDestroy, onMount } from 'svelte';
+  import { getContext, onDestroy, onMount, untrack } from 'svelte';
+  import { AlertCircle } from 'lucide-svelte';
   import { toast } from 'svelte-sonner';
   import { getOrCreatePaneState } from './paneStore.svelte';
+  import { canSaveWorksheet, loadWorksheetInto } from './worksheetLoad';
   import { panes as panesSingleton, type PaneTreeStore } from '../stores/panes.svelte';
   import { profiles } from '../stores/profiles.svelte';
   import { sessions } from '../stores/sessions.svelte';
@@ -15,11 +35,14 @@
   import type { RunAtCursorPayload } from '../editor/runCommands';
   import { splitSql } from '../editor/splitSql';
   import ResultsTabs from '../results/ResultsTabs.svelte';
-  import type { Worksheet } from '../../../main/types';
+  import type { SessionId, Worksheet } from '../../../main/types';
 
   let { paneId, worksheetId }: { paneId: string; worksheetId: string } = $props();
 
-  const paneState = $derived(getOrCreatePaneState(paneId, worksheetId));
+  // Fixed for this instance: PaneTree keys it by paneId. Props are live
+  // getters, so a derived lookup could resolve to another pane after this
+  // one is torn down, e.g. inside a run that outlives it.
+  const paneState = untrack(() => getOrCreatePaneState(paneId, worksheetId));
 
   const SAVE_DEBOUNCE_MS = 500;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -49,7 +72,7 @@
       saveTimer = null;
     }
     if (!pendingSave) return;
-    if (!paneState.hydrated) return;
+    if (!canSaveWorksheet(paneState)) return;
     pendingSave = false;
     try {
       await snowboy.workspace.saveWorksheet(buildSnapshot());
@@ -60,7 +83,7 @@
   }
 
   function scheduleSave(): void {
-    if (!paneState.hydrated) return;
+    if (!canSaveWorksheet(paneState)) return;
     pendingSave = true;
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -69,45 +92,39 @@
     }, SAVE_DEBOUNCE_MS);
   }
 
+  // Set when loading the stored worksheet fails. The pane then stays
+  // unhydrated: the editor is hidden and every save path is blocked (see
+  // worksheetLoad.ts). The pane shows the error with a Retry instead.
+  let loadError = $state<string | null>(null);
+  let destroyed = false;
+
+  async function loadWorksheet(): Promise<void> {
+    loadError = null;
+    const result = await loadWorksheetInto(
+      paneState,
+      (id) => snowboy.workspace.getWorksheet(id),
+      () => destroyed
+    );
+    if (result.status === 'failed') {
+      console.error(`[WorksheetPane] hydrate failed: ${result.error}`);
+      loadError = result.error;
+    }
+  }
+
   onMount(() => {
-    let cancelled = false;
-    const requestedId = paneState.worksheetId;
-
-    void (async () => {
-      try {
-        const stored = await snowboy.workspace.getWorksheet(requestedId);
-        if (cancelled) return;
-        // Stale-load guard: if the pane's worksheetId changed while the
-        // fetch was in flight, drop the response (reactivity-critic #7).
-        if (paneState.worksheetId !== requestedId) return;
-        if (stored !== null) {
-          paneState.body = stored.body;
-          paneState.title = stored.title;
-          paneState.cursorLine = stored.cursorLine ?? null;
-          paneState.cursorCol = stored.cursorCol ?? null;
-          paneState.scrollTop = stored.scrollTop ?? null;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[WorksheetPane] hydrate failed: ${message}`);
-      } finally {
-        if (!cancelled && paneState.worksheetId === requestedId) {
-          paneState.hydrated = true;
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    // Pane state outlives this component. On a remount (tab switch, split)
+    // it may hold edits not yet saved, so only the first mount loads storage.
+    // A pane whose load failed is still not hydrated, so a remount retries.
+    if (!paneState.hydrated) void loadWorksheet();
   });
 
   onDestroy(() => {
+    destroyed = true;
     if (saveTimer !== null) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    if (pendingSave && paneState.hydrated) {
+    if (pendingSave && canSaveWorksheet(paneState)) {
       pendingSave = false;
       // Pane-close flush: fire-and-forget the IPC. Closing a single pane
       // does not race with main-process shutdown (that's T4.1's
@@ -132,7 +149,7 @@
     void paneState.scrollTop;
     const count = interactionCount;
 
-    if (!paneState.hydrated) return;
+    if (!canSaveWorksheet(paneState)) return;
     if (count === 0) return;
     scheduleSave();
   });
@@ -194,9 +211,7 @@
   let isActive = $derived(panes.activePaneId === paneId);
 
   let activeQueryState = $derived(queries.get(paneState.currentQueryId));
-  let isRunning = $derived(
-    paneState.currentQueryIds.some((id) => queries.get(id)?.status === 'running')
-  );
+  let isRunning = $derived(runningPanes.has(paneId));
   let canCancel = $derived(activeQueryState?.status === 'running');
 
   function handlePaneClick(): void {
@@ -205,7 +220,42 @@
 
   let editorApi: SqlEditorApi | null = $state(null);
 
+  // Every run entry point (Run button, Ctrl+Enter, Ctrl+Shift+Enter) checks
+  // `isRunning` first, then calls this.
+  async function runStatements(sessionId: SessionId, statements: string[]): Promise<void> {
+    // Captured before the first await: if the pane remounts mid-run, the
+    // `paneId` prop read afterwards resolves to whatever pane now fills
+    // this slot.
+    const owner = paneId;
+    runningPanes.add(owner);
+    try {
+      for (const id of paneState.currentQueryIds) queries.clear(id);
+      paneState.currentQueryIds = [];
+      paneState.currentStatements = statements;
+      paneState.activeResultIndex = 0;
+
+      for (let i = 0; i < statements.length; i++) {
+        const stmt = statements[i]!;
+        try {
+          const queryId = await snowboy.query.run(sessionId, stmt);
+          queries.register(queryId);
+          paneState.currentQueryIds = [...paneState.currentQueryIds, queryId];
+          paneState.activeResultIndex = i;
+          await queries.waitForCompletion(queryId);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const label = statements.length > 1 ? `Statement ${i + 1} failed: ` : '';
+          toast.error(`${label}${message}`);
+          break;
+        }
+      }
+    } finally {
+      runningPanes.delete(owner);
+    }
+  }
+
   async function handleRun(): Promise<void> {
+    if (isRunning) return;
     const sessionId = sessions.activeSessionId;
     if (sessionId === null) {
       toast.error('No active session — open a connection first.');
@@ -222,28 +272,11 @@
       return;
     }
 
-    paneState.currentQueryIds = [];
-    paneState.currentStatements = statements;
-    paneState.activeResultIndex = 0;
-
-    for (let i = 0; i < statements.length; i++) {
-      const stmt = statements[i]!;
-      try {
-        const queryId = await snowboy.query.run(sessionId, stmt);
-        queries.register(queryId);
-        paneState.currentQueryIds = [...paneState.currentQueryIds, queryId];
-        paneState.activeResultIndex = i;
-        await queries.waitForCompletion(queryId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const label = statements.length > 1 ? `Statement ${i + 1} failed: ` : '';
-        toast.error(`${label}${message}`);
-        break;
-      }
-    }
+    await runStatements(sessionId, statements);
   }
 
   async function handleRunAtCursor(payload: RunAtCursorPayload): Promise<void> {
+    if (isRunning) return;
     const sessionId = sessions.activeSessionId;
     if (sessionId === null) {
       toast.error('No active session — open a connection first.');
@@ -262,25 +295,7 @@
     const last = payload.statements[payload.statements.length - 1]!;
     editorApi?.flashStatement(first.segmentStart, last.segmentEnd);
 
-    paneState.currentQueryIds = [];
-    paneState.currentStatements = trimmedStatements;
-    paneState.activeResultIndex = 0;
-
-    for (let i = 0; i < trimmedStatements.length; i++) {
-      const stmt = trimmedStatements[i]!;
-      try {
-        const queryId = await snowboy.query.run(sessionId, stmt);
-        queries.register(queryId);
-        paneState.currentQueryIds = [...paneState.currentQueryIds, queryId];
-        paneState.activeResultIndex = i;
-        await queries.waitForCompletion(queryId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const label = trimmedStatements.length > 1 ? `Statement ${i + 1} failed: ` : '';
-        toast.error(`${label}${message}`);
-        break;
-      }
-    }
+    await runStatements(sessionId, trimmedStatements);
   }
 
   function handleNoStatementAtCursor(): void {
@@ -298,26 +313,22 @@
     }
   }
 
-  let availableRoles = $state<string[]>([]);
-  let availableWarehouses = $state<string[]>([]);
-  let availableDatabases = $state<string[]>([]);
   let availableSchemas = $state<string[]>([]);
-  let lastFetchedSessionId: string | null = null;
   let lastFetchedDatabaseForSchemas: string | null = null;
 
   $effect(() => {
     const sid = sessions.activeSessionId;
     if (sid === null) {
-      availableRoles = [];
-      availableWarehouses = [];
-      availableDatabases = [];
+      sessionLists.roles = [];
+      sessionLists.warehouses = [];
+      sessionLists.databases = [];
+      sessionListsFor = null;
       availableSchemas = [];
-      lastFetchedSessionId = null;
       lastFetchedDatabaseForSchemas = null;
       return;
     }
-    if (sid === lastFetchedSessionId) return;
-    lastFetchedSessionId = sid;
+    if (sid === sessionListsFor) return;
+    sessionListsFor = sid;
     void (async () => {
       try {
         const profileId = profiles.activeProfileId;
@@ -329,10 +340,12 @@
             : sharedSchemaCatalog.ensureDatabases(sid, profileId)
         ]);
         if (sessions.activeSessionId !== sid) return;
-        availableRoles = roles;
-        availableWarehouses = warehouses;
-        availableDatabases = databases;
+        sessionLists.roles = roles;
+        sessionLists.warehouses = warehouses;
+        sessionLists.databases = databases;
       } catch (err) {
+        // Let the next mount retry.
+        if (sessionListsFor === sid) sessionListsFor = null;
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[WorksheetPane] context-list fetch failed: ${message}`);
       }
@@ -434,10 +447,10 @@
           {paneState.role || 'Role'}
         </Select.Trigger>
         <Select.Content>
-          {#each availableRoles as roleName (roleName)}
+          {#each sessionLists.roles as roleName (roleName)}
             <Select.Item value={roleName}>{roleName}</Select.Item>
           {/each}
-          {#if availableRoles.length === 0 && paneState.role}
+          {#if sessionLists.roles.length === 0 && paneState.role}
             <Select.Item value={paneState.role}>{paneState.role}</Select.Item>
           {/if}
         </Select.Content>
@@ -452,10 +465,10 @@
           {paneState.warehouse || 'Warehouse'}
         </Select.Trigger>
         <Select.Content>
-          {#each availableWarehouses as whName (whName)}
+          {#each sessionLists.warehouses as whName (whName)}
             <Select.Item value={whName}>{whName}</Select.Item>
           {/each}
-          {#if availableWarehouses.length === 0 && paneState.warehouse}
+          {#if sessionLists.warehouses.length === 0 && paneState.warehouse}
             <Select.Item value={paneState.warehouse}>{paneState.warehouse}</Select.Item>
           {/if}
         </Select.Content>
@@ -470,10 +483,10 @@
           {paneState.database || 'Database'}
         </Select.Trigger>
         <Select.Content>
-          {#each availableDatabases as dbName (dbName)}
+          {#each sessionLists.databases as dbName (dbName)}
             <Select.Item value={dbName}>{dbName}</Select.Item>
           {/each}
-          {#if availableDatabases.length === 0 && paneState.database}
+          {#if sessionLists.databases.length === 0 && paneState.database}
             <Select.Item value={paneState.database}>{paneState.database}</Select.Item>
           {/if}
         </Select.Content>
@@ -536,6 +549,14 @@
         onNoStatementAtCursor={handleNoStatementAtCursor}
         onRunAll={handleRun}
       />
+    {:else if loadError !== null}
+      <div role="alert" class="flex flex-col items-center justify-center gap-3 h-full px-6">
+        <AlertCircle class="w-8 h-8 text-destructive" />
+        <div class="text-sm font-medium">Failed to load worksheet</div>
+        <div class="text-xs text-muted-foreground text-center break-words">{loadError}</div>
+        <div class="text-xs text-muted-foreground">Editing is paused until it loads.</div>
+        <Button size="sm" variant="outline" onclick={loadWorksheet}>Retry</Button>
+      </div>
     {/if}
   </div>
 

@@ -14,15 +14,22 @@
  *                     first batch shows up so the worksheet pane can
  *                     paint a loading state.
  *   onRowBatch       → append to a non-reactive buffer; schedule flush.
- *   flush            → splice buffer into reactive `rows`; clear buffer.
+ *   flush            → assign `rows` a new array with the buffer appended;
+ *                     clear buffer.
  *   onComplete       → set status='success', durationMs, warehouse.
  *   onError          → set status='error', message.
  *   "Cancelled" comes back via `onError` with message='Query cancelled';
  *   the store classifies that as status='cancelled' for nicer UI.
+ *   `clear(qid)`     → drop the state and any buffered rows; later events
+ *                     for that id are ignored.
  *
- * Memory: this store grows unboundedly with completed queries. v0.1
- * acceptable; Wave 4 should add an eviction policy keyed by pane
- * unmount / explicit clear.
+ * Memory: `rows` is `$state.raw`, so rows are stored without per-row
+ * proxies, and every change must assign a new array. A worksheet pane
+ * clears its previous run's queries when it starts a new run. Closing a
+ * pane does not clear them yet, and there is no row cap.
+ *
+ * `QueriesStore` is exported (in addition to the `queries` singleton) so
+ * tests can construct fresh instances with an injected event source.
  */
 
 import { SvelteMap } from 'svelte/reactivity';
@@ -31,9 +38,12 @@ import type {
   QueryErrorEvent,
   QueryId,
   QueryRowBatchEvent,
-  ResultColumn
+  ResultColumn,
+  SnowboyApi
 } from '../../../main/types';
 import { snowboy } from '../ipc/client';
+
+export type QueryEventSource = SnowboyApi['queryEvents'];
 
 export type QueryStatus = 'running' | 'success' | 'error' | 'cancelled';
 
@@ -45,7 +55,7 @@ const CANCEL_MESSAGE = 'Query cancelled';
 
 export class QueryState {
   columns = $state<ResultColumn[]>([]);
-  rows = $state<ResultRow[]>([]);
+  rows = $state.raw<ResultRow[]>([]);
   status = $state<QueryStatus>('running');
   durationMs = $state<number | null>(null);
   warehouse = $state<string | null>(null);
@@ -53,15 +63,24 @@ export class QueryState {
   startedAt = $state<number>(Date.now());
 }
 
-class QueriesStore {
+export class QueriesStore {
+  #events: QueryEventSource;
   #map = new SvelteMap<QueryId, QueryState>();
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- private, non-reactive row buffer
   #pending = new Map<QueryId, ResultRow[]>();
+  // Ids released by `clear()`. Events can still arrive for them (a failed
+  // server-side cancel reports an error after the terminal event), and
+  // without this the demux below would recreate their state. Holds only
+  // id strings.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- private, never rendered
+  #disposed = new Set<QueryId>();
   #flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor() {
-    snowboy.queryEvents.onRowBatch((event) => this.handleBatch(event));
-    snowboy.queryEvents.onComplete((event) => this.handleComplete(event));
-    snowboy.queryEvents.onError((event) => this.handleError(event));
+  constructor(events: QueryEventSource = snowboy.queryEvents) {
+    this.#events = events;
+    events.onRowBatch((event) => this.handleBatch(event));
+    events.onComplete((event) => this.handleComplete(event));
+    events.onError((event) => this.handleError(event));
   }
 
   get(queryId: QueryId | null): QueryState | null {
@@ -70,12 +89,14 @@ class QueriesStore {
   }
 
   register(queryId: QueryId): QueryState {
+    this.#disposed.delete(queryId);
     return this.ensureState(queryId);
   }
 
   clear(queryId: QueryId): void {
     this.#map.delete(queryId);
     this.#pending.delete(queryId);
+    this.#disposed.add(queryId);
   }
 
   waitForCompletion(queryId: QueryId): Promise<void> {
@@ -91,13 +112,13 @@ class QueriesStore {
           return;
         }
       }
-      const offComplete = snowboy.queryEvents.onComplete((event) => {
+      const offComplete = this.#events.onComplete((event) => {
         if (event.queryId !== queryId) return;
         offComplete();
         offError();
         resolve();
       });
-      const offError = snowboy.queryEvents.onError((event) => {
+      const offError = this.#events.onError((event) => {
         if (event.queryId !== queryId) return;
         offComplete();
         offError();
@@ -107,6 +128,7 @@ class QueriesStore {
   }
 
   private handleBatch(event: QueryRowBatchEvent): void {
+    if (this.#disposed.has(event.queryId)) return;
     const state = this.ensureState(event.queryId);
     if (state.columns.length === 0 && event.columns.length > 0) {
       state.columns = [...event.columns];
@@ -123,6 +145,7 @@ class QueriesStore {
   }
 
   private handleComplete(event: QueryCompleteEvent): void {
+    if (this.#disposed.has(event.queryId)) return;
     this.flushAll();
     const state = this.ensureState(event.queryId);
     state.status = 'success';
@@ -131,6 +154,7 @@ class QueriesStore {
   }
 
   private handleError(event: QueryErrorEvent): void {
+    if (this.#disposed.has(event.queryId)) return;
     this.flushAll();
     const state = this.ensureState(event.queryId);
     const cancelled = event.message === CANCEL_MESSAGE;

@@ -34,7 +34,11 @@
 </script>
 
 {#if tree.kind === 'leaf'}
-  <WorksheetPane paneId={tree.paneId} worksheetId={tree.worksheetId} />
+  <!-- Keyed so a leaf-to-leaf swap (new tab, Ctrl+W on a lone pane) mounts a
+       fresh WorksheetPane: it hydrates in onMount, and shows no editor until then. -->
+  {#key tree.paneId}
+    <WorksheetPane paneId={tree.paneId} worksheetId={tree.worksheetId} />
+  {/key}
 {:else}
   <Splitpanes
     horizontal={tree.direction === 'h'}

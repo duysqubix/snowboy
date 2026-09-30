@@ -159,8 +159,6 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeyDown} />
-
 <div class="relative flex flex-col w-full h-full bg-background overflow-hidden border border-border rounded-md">
   <div class="flex items-center justify-between p-2 border-b border-border bg-muted/50">
     <div class="text-sm text-muted-foreground">
@@ -202,7 +200,15 @@
     {/if}
 
     <div bind:this={scrollEl} class="w-full h-full overflow-auto">
-      <table class="border-collapse" style:display="grid">
+      <!-- Focusable so clicking a row focuses the grid: Ctrl+C copies rows only
+           while focus is inside it, and the editor keeps its own copy. -->
+      <table
+        class="border-collapse"
+        style:display="grid"
+        role="grid"
+        tabindex="0"
+        onkeydown={handleKeyDown}
+      >
         <thead class="sticky top-0 z-20 bg-muted shadow-sm" style:display="grid">
           <tr style:display="flex" style:width="100%">
             {#each resolved as col (col.name)}

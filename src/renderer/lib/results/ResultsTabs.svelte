@@ -73,12 +73,16 @@
     {/if}
 
     <div class="min-h-0 flex-1">
-      <ResultsGrid
-        columns={activeColumns}
-        rows={activeRows}
-        loading={activeLoading}
-        error={activeError}
-      />
+      <!-- Keyed so each result gets a fresh grid: row selection, an open cell
+           detail and the scroll position belong to the result they came from. -->
+      {#key activeQueryId}
+        <ResultsGrid
+          columns={activeColumns}
+          rows={activeRows}
+          loading={activeLoading}
+          error={activeError}
+        />
+      {/key}
     </div>
   </div>
 {/if}

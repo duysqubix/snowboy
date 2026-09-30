@@ -26,6 +26,7 @@ plugin({
 (globalThis as any).$state = (v: any) => v;
 (globalThis as any).$derived = (v: any) => v;
 (globalThis as any).$effect = (v: any) => v;
+(globalThis as unknown as { $state: { raw: <T>(v: T) => T } }).$state.raw = (v) => v;
 
 class MockEventTarget {
   listeners: Record<string, Function[]> = {};
@@ -76,6 +77,11 @@ class MockEventTarget {
   },
   workspaceEvents: {
     onRequestFlush: () => () => {}
+  },
+  queryEvents: {
+    onRowBatch: () => () => {},
+    onComplete: () => () => {},
+    onError: () => () => {}
   }
 };
 (globalThis as any).document = {
