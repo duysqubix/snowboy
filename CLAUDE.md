@@ -1,6 +1,6 @@
 # Snowboy — Claude Code guide
 
-Cross-platform desktop IDE for Snowflake (pre-alpha): Electron 32 + Svelte 5 + TypeScript, built with electron-vite, managed with Bun.
+Cross-platform desktop IDE for Snowflake (pre-alpha): Electron 44 + Svelte 5 + TypeScript, built with electron-vite, managed with Bun.
 
 ## Task tracking: `docs/PLAN.md` (no beads)
 
@@ -10,10 +10,10 @@ This project does **not** use beads (`bd`). Ignore beads instructions or context
 
 ## Build & Test
 
-Toolchain: Bun ≥ 1.3 and Node ≥ 20.19 (tooling only — Electron 32 bundles its own Node 20.18). `bun install` downloads better-sqlite3's prebuilt Electron binary. `g++`, `make`, and `python3` are needed only when no prebuild matches the platform or the download fails (e.g. offline). Linux also needs GTK 3, NSS, and ALSA runtime libraries.
+Toolchain: Bun ≥ 1.3 and Node ≥ 22.12 (tooling only — Electron 44 bundles its own Node 24.21). No compiler toolchain is needed: better-sqlite3's prebuilt binaries ship inside its npm package, and the `postinstall` hook (`bun run setup:natives`, `scripts/setup-natives.ts`) downloads the Electron binary, which the `electron` package stopped doing itself in Electron 42, then checks that better-sqlite3 loads in it. See the native-module landmines below. Linux also needs GTK 3, NSS, and ALSA runtime libraries.
 
 ```bash
-bun install        # postinstall fetches better-sqlite3's Electron-ABI prebuild, compiling only as a fallback (scripts/rebuild-natives.ts)
+bun install        # postinstall runs `bun run setup:natives`: downloads the Electron binary, checks better-sqlite3 loads in it
 bun run dev        # electron-vite dev: HMR renderer on :5173 + Electron window
 bun run build      # main/preload/renderer bundles -> out/
 bun run typecheck  # tsc (main, preload) + svelte-check (renderer); does NOT cover tests/, scripts/, or config files
@@ -23,17 +23,17 @@ bun run test:e2e   # builds, then Playwright launches Electron (throwaway userDa
 ```
 
 - `bun test` and `bun run test` are equivalent. `bunfig.toml` `[test]` sets `root = "./tests/unit"` and preloads `tests/unit/setup.ts` (rune and DOM shims). A positional filter runs only matching files (`bun test splitSql`); a filter that matches nothing exits 1.
-- CI (`.github/workflows/ci.yml`) runs typecheck, lint, and unit tests on every push and PR, installing with `--ignore-scripts` (no Electron, no native build). e2e is local-only for now.
+- CI (`.github/workflows/ci.yml`) runs typecheck, lint, and unit tests on every push and PR, installing with `--ignore-scripts`, which skips the postinstall (no Electron download, no better-sqlite3 check). e2e is local-only for now.
 - Don't run `bun run format` (`prettier --write .`): much of the tree is not Prettier-clean and there is no `.prettierignore`, so it rewrites ~170 files. Format only what you touched: `bunx prettier --write <files>`.
 - Done means `typecheck`, `lint`, `test`, and `test:e2e` all pass. On a clean checkout all are green; the only skip is `tests/unit/snowflake.smoke.test.ts`, a live Snowflake round-trip enabled by `SNOWBOY_TEST_ACCOUNT`, `SNOWBOY_TEST_USER`, `SNOWBOY_TEST_PWD` (optional `SNOWBOY_TEST_ROLE` / `_WAREHOUSE` / `_DATABASE` / `_SCHEMA`). Never commit credentials.
-- Unit tests do not exercise the real stack. Storage runs on `bun:sqlite` (Bun blocks better-sqlite3; `src/main/storage/db.ts` switches drivers), migrations load from disk instead of the embedded map, and Svelte runes are identity shims (no reactivity). `$state.raw` is an identity shim too, while `$state.snapshot` and `$derived.by` are undefined. Verify storage and UI changes with `bun run test:e2e`, and UI behaviour in `bun run dev`.
+- Unit tests do not exercise the real stack. Storage runs on `bun:sqlite` (`src/main/storage/db.ts` picks it whenever `globalThis.Bun` is set, because Bun 1.3.9 can't load better-sqlite3), migrations load from disk instead of the embedded map, and Svelte runes are identity shims (no reactivity). `$state.raw` is an identity shim too, while `$state.snapshot` and `$derived.by` are undefined. Verify storage and UI changes with `bun run test:e2e`, and UI behaviour in `bun run dev`.
 - `bun run dev` uses Electron `userData` — `~/.config/snowboy` on Linux — holding `snowboy.db`, `settings.json`, and `secrets.json` (safeStorage-encrypted saved passwords). Deleting it for a clean slate also wipes saved credentials.
 - `test:e2e` never touches that directory. Specs launch through `tests/e2e/helpers/launch.ts`, which passes `--user-data-dir` pointing at a throwaway temp dir and removes it afterwards. New specs must use that helper, never `electron.launch` directly.
 - Stop `bun run dev` by closing the window or Ctrl+C. If you kill it from a script, check for an orphaned `node_modules/electron/dist/electron .` process afterwards; one has been seen ignoring SIGTERM.
 
 ### Platform: install and run on the same OS
 
-`node_modules` holds platform-specific binaries (Electron itself and `better-sqlite3`).
+`node_modules` holds platform-specific binaries: Electron itself (`electron/dist` and `electron/path.txt`) and the esbuild and Rollup platform packages. better-sqlite3 is not one of them; it ships every platform's prebuild.
 
 - **WSL clone on the Linux filesystem** (e.g. `~/.repos/snowboy`): run everything from WSL bash. Works under WSLg — `dev` launches and `test:e2e` passes. `viz_main_impl ... Exiting GPU process` errors are benign (software-rendering fallback).
 - **Windows clone** (`C:\...`): run from PowerShell with Windows `bun.exe` only. `bun install` from WSL against a `/mnt/c/...` checkout installs Linux binaries that crash Windows Electron — that is what the "never WSL" rule in `.sisyphus/plans/snowboy-handoff-2026-05-20.md` refers to.
@@ -80,6 +80,12 @@ Three bundles:
 - IPC during renderer unload is unreliable; use the existing ack-and-timeout flush pattern.
 - A zero-row result still emits one empty batch carrying the columns (`src/main/snowflake/streaming.ts`); consumers rely on it.
 - Electron and Bun use BoringSSL, while Node uses OpenSSL, so `node:crypto` error codes and messages differ between them. A wrong passphrase can even surface as a decode error. Classify keys by input structure, not error text (see `checkPrivateKeyFile` in `src/main/snowflake/auth.ts`).
+
+**Native-module landmines**
+
+- better-sqlite3 13 is a Node-API addon: one binary per platform works with every Electron version. Its npm package ships `prebuilds/<platform>-<arch>.node` for Linux (glibc ≥ 2.34, plus musl), macOS, and Windows, each x64 and arm64. `lib/binding.js` loads that file whenever it exists and falls back to `build/Release` only when it doesn't, so a prebuild that exists but won't load is never replaced. Nothing compiles on install. On a platform without a prebuild, build by hand (`cd node_modules/better-sqlite3 && bunx node-gyp rebuild`, which needs g++, make, and python3), then run `bun run setup:natives`.
+- Keep `trustedDependencies` in `package.json` a non-empty list. It holds only `electron`, whose package has had no install scripts since Electron 42, as a placeholder. A non-empty list replaces Bun's default allowlist, and that default trusts better-sqlite3. An empty list doesn't work: Bun leaves it out of `bun.lock`, and every later install falls back to the default. Bun ignores better-sqlite3's `gypfile: false`, so a trusted better-sqlite3 gets an implicit `node-gyp rebuild` that builds nothing yet needs Python, plus Visual Studio on Windows. Never `bun pm trust` better-sqlite3 or esbuild (or `--all`); esbuild's blocked postinstall isn't needed either.
+- After an `--ignore-scripts` install, run `bun run setup:natives` before `bun run dev`: electron-vite reads `node_modules/electron/path.txt` and never downloads Electron itself.
 
 **Tests.**
 - Unit: `bun:test` under `tests/unit/`, grouped by area (`editor/`, `ipc/`, `storage/`, `stores/`, `results/`, `panes/`, …).

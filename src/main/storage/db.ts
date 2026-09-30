@@ -10,11 +10,12 @@
  * error, not a recoverable condition.
  *
  * Runtime-selected SQLite driver:
- *   - Electron (production): `better-sqlite3`, rebuilt against Electron's
- *     bundled Node ABI by `scripts/rebuild-natives.ts`.
- *   - Bun (test runtime): `better-sqlite3` is explicitly blocked at the
- *     N-API loader level by Bun (see oven-sh/bun#4290). We fall back to
- *     the built-in `bun:sqlite`, which exposes a structurally compatible
+ *   - Electron (production): `better-sqlite3`, a Node-API addon that loads
+ *     its bundled prebuild (checked on install by `scripts/setup-natives.ts`).
+ *   - Bun (test runtime): the built-in `bun:sqlite`, picked whenever
+ *     `globalThis.Bun` is set. Bun 1.3.9 can't run better-sqlite3: it refuses
+ *     v12's `better_sqlite3.node` (oven-sh/bun#4290) and panics loading v13's
+ *     Node-API prebuild. `bun:sqlite` exposes a structurally compatible
  *     subset of the better-sqlite3 API for `prepare`, `exec`,
  *     `transaction`, and `close`. Storage code restricts itself to that
  *     subset and uses positional `?` placeholders so the same source
