@@ -164,6 +164,21 @@ describe('buildConnectOptions', () => {
     expect(ok['password']).toBe('pw');
   });
 
+  test('password_mfa asks the SDK to cache the MFA token under its exact option name', () => {
+    // snowflake-sdk reads `clientRequestMFAToken` (connection_config.js); any
+    // other casing is silently ignored and every connect prompts for MFA again.
+    const ok = buildConnectOptions(profileFixture({ authMethod: 'password_mfa' }), 'pw');
+    expect(ok['clientRequestMFAToken']).toBe(true);
+    expect(ok['clientRequestMfaToken']).toBeUndefined();
+  });
+
+  test('externalbrowser asks the SDK to cache the SSO token', () => {
+    const opts = buildConnectOptions(
+      profileFixture({ authMethod: 'externalbrowser', username: 'tester' }),
+    );
+    expect(opts['clientStoreTemporaryCredential']).toBe(true);
+  });
+
   test('password sets SNOWFLAKE and forwards creds', () => {
     const ok = buildConnectOptions(profileFixture({ authMethod: 'password' }), 'pw');
     expect(ok['authenticator']).toBe('SNOWFLAKE');

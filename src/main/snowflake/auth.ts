@@ -96,7 +96,9 @@ export function buildConnectOptions(
         authenticator: 'USERNAME_PASSWORD_MFA',
         username: profile.username,
         password,
-        clientRequestMfaToken: true,
+        // Exact SDK option name (connection_config.js reads `clientRequestMFAToken`);
+        // other casings are silently ignored and every connect re-prompts for MFA.
+        clientRequestMFAToken: true,
       };
       if (passcode !== undefined && passcode !== '') {
         mfaOpts['passcode'] = passcode;
