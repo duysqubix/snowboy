@@ -193,4 +193,53 @@ describe('completionPrefetch', () => {
 
     expect(schemaCalls(calls)).toHaveLength(0);
   });
+
+  // bun:test fails a test when a promise rejects with no handler, so each failure test
+  // flushes a macrotask to surface any stray rejection inside the test that caused it.
+  test('a failed database fetch rejects the caller without an unhandled rejection', async () => {
+    const cache = createCompletionCache();
+    const failure = new Error('listDatabases failed');
+    const fetcher: CompletionFetcher = { ensure: () => Promise.reject(failure) };
+    const catalog = createSharedSchemaCatalog(cache, fetcher);
+
+    await expect(catalog.ensureDatabases(SID_A, PROFILE_A)).rejects.toBe(failure);
+    await flush();
+  });
+
+  test('a failed database fetch is not left in flight: the next call fetches again', async () => {
+    const cache = createCompletionCache();
+    let attempts = 0;
+    const fetcher: CompletionFetcher = {
+      ensure: () => {
+        attempts++;
+        return Promise.reject(new Error('listDatabases failed'));
+      }
+    };
+    const catalog = createSharedSchemaCatalog(cache, fetcher);
+
+    await expect(catalog.ensureDatabases(SID_A, PROFILE_A)).rejects.toThrow('listDatabases failed');
+    await expect(catalog.ensureDatabases(SID_A, PROFILE_A)).rejects.toThrow('listDatabases failed');
+    await flush();
+
+    expect(attempts).toBe(2);
+  });
+
+  test('a failed warmup on activation does not surface as an unhandled rejection', async () => {
+    const cache = createCompletionCache();
+    const calls: EnsureCall[] = [];
+    const fetcher: CompletionFetcher = {
+      ensure: (sessionId, profileId, path) => {
+        calls.push({ sessionId, profileId, path: [...path] });
+        return Promise.reject(new Error('listDatabases failed'));
+      }
+    };
+    const store = makeStore(SID_A, PROFILE_A);
+    const prefetch = setupCompletionPrefetch({ cache, fetcher, sessionsStore: store });
+
+    prefetch.sync();
+    await flush();
+
+    expect(dbCalls(calls)).toHaveLength(1);
+    expect(schemaCalls(calls)).toHaveLength(0);
+  });
 });

@@ -48,7 +48,12 @@ export function createSharedSchemaCatalog(
         return cache.get(profileId, ['databases']) ?? [];
       });
       inFlightDatabases.set(key, promise);
-      promise.finally(() => inFlightDatabases.delete(key));
+      // then(clear, clear), not finally(clear): finally() returns a derived promise
+      // that re-rejects with no handler when the fetch fails.
+      const clear = (): void => {
+        inFlightDatabases.delete(key);
+      };
+      promise.then(clear, clear);
       return promise;
     }
   };
@@ -92,7 +97,9 @@ export function setupCompletionPrefetch(
       if (warmedSessions.has(sessionId)) return; // once per activation.
       warmedSessions.add(sessionId);
       const token = ++activeToken;
-      void warmup(sessionId, profileId, token);
+      warmup(sessionId, profileId, token).catch((err: unknown) => {
+        console.warn('[completionPrefetch] warmup failed', err);
+      });
     },
     dispose(): void {
       disposed = true;
