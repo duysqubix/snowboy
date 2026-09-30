@@ -3,4 +3,8 @@ linker = "hoisted"
 save-text-lockfile = true
 
 [test]
+# Unit tests only; the Playwright specs in tests/e2e/ run via `bun run test:e2e`.
+root = "./tests/unit"
+# Svelte rune shims, a .svelte loader, and minimal DOM globals.
+preload = ["./tests/unit/setup.ts"]
 # conditions = ["browser"]
