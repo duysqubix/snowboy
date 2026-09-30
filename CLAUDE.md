@@ -20,6 +20,8 @@ bun run typecheck  # tsc (main, preload) + svelte-check (renderer); does NOT cov
 bun run lint       # ESLint flat config
 bun run test       # unit tests (bun:test); same as bare `bun test`; takes a file filter
 bun run test:e2e   # builds, then Playwright launches Electron (throwaway userData) and runs tests/e2e/specs/
+bun run build:linux  # electron-vite build + electron-builder: dist/*.AppImage, dist/*.deb, dist/linux-unpacked/
+bun run build:win    # NSIS installer; build it on Windows (cross-building from Linux needs Wine)
 ```
 
 - `bun test` and `bun run test` are equivalent. `bunfig.toml` `[test]` sets `root = "./tests/unit"` and preloads `tests/unit/setup.ts` (rune and DOM shims). A positional filter runs only matching files (`bun test splitSql`); a filter that matches nothing exits 1.
@@ -46,12 +48,22 @@ Three bundles:
 | Layer | Path | Role |
 |---|---|---|
 | Main (Node) | `src/main/` | `ipc/` — one module per domain (connections, sessions, query, schema, history, workspace, settings, theme), each exporting `register(ipcMain)`, wired in `ipc/index.ts`. `snowflake/` — `Session` (live sessions are a `Map` in `ipc/sessions.ts`), auth options, row streaming over `snowflake-sdk`, and `sqlText.ts` (`quoteIdent` / `sqlStringLiteral`); `pool.ts` (`SessionPool`) is unit-tested but not wired into the app. `storage/` — better-sqlite3 repos (worksheets, layout, history, profiles, schemaCache) + migrations; `settings.ts` is a synchronous flat-JSON store at `<userData>/settings.json` (no SQLite), with `settingsEvents.ts` as its change emitter. `secrets/` — saved passwords, PATs, and key-pair passphrases, encrypted with Electron `safeStorage` in `<userData>/secrets.json`. Key-pair profiles store only the key file's path (`private_key_path`); never copy, cache, or log key contents. |
-| Preload | `src/preload/index.ts` | `contextBridge` exposes `window.snowboy` (the `SnowboyApi`) and `window.snowboySettingsBoot`. |
+| Preload | `src/preload/index.ts` → `out/preload/index.cjs` | Runs **sandboxed** (`sandbox: true`), so it must be CommonJS and may import only `electron`: no Node modules and no Node globals. `contextBridge` exposes `window.snowboy` (the `SnowboyApi`) and `window.snowboySettingsBoot`. |
 | Renderer | `src/renderer/` | Svelte 5 (runes) + Tailwind 3; shadcn-svelte/bits-ui primitives in `lib/components/ui/`; CodeMirror 6 SQL editor and IntelliSense completion cache in `lib/editor/`; global stores in `lib/stores/*.svelte.ts`; split-pane worksheets in `lib/panes/`; virtualized results grid in `lib/results/`; Object Browser in `lib/browser/`. |
 
 - **IPC contract.** `src/main/types.ts` (`SnowboyApi`) is the single source of truth; channel strings live in `src/main/ipc/channels.ts` (`CHANNELS`), imported by both preload and main — except the synchronous `theme.boot` channel, a raw string on both sides. A new call touches `channels.ts` → `types.ts` → the handler in `src/main/ipc/<domain>.ts` → `src/preload/index.ts` → the renderer caller via `lib/ipc/client.ts`, plus a test under `tests/unit/ipc/`.
 - **Migrations.** Add `src/main/storage/migrations/NNN_name.sql` *and* register it in `src/main/storage/embedded-migrations.ts` (imported with `?raw`). The app runs only registered migrations; unit tests scan the directory, so they will not catch a missing registration.
-- **Startup / shutdown.** `src/main/index.ts`: `smokeLoadNatives()` → `openDatabase()` → `registerIpc()` → window. Quit goes through a single `before-quit` orchestrator (renderer flush handshake with a 2 s timeout → `closeAllSessions()` → `closeDatabase()` → `app.quit()`), guarded by a `shutdownComplete` flag because that final `app.quit()` fires `before-quit` again. Extend it; never register another `before-quit` handler.
+- **Startup / shutdown.** `src/main/index.ts`:
+  - Startup: single-instance lock (a second launch focuses the first window, or opens one if none exists) → `openDatabase()` → `registerIpc()` → window.
+  - Any startup failure logs, shows a "Snowboy failed to start" dialog with the data folder, and exits 1.
+  - Quit goes through a single `before-quit` orchestrator: renderer flush handshake (2 s timeout, skipped when no window remains) → `closeAllSessions()` (capped at 3 s) → `closeDatabase()` → `app.quit()`. A `shutdownComplete` flag guards it, because that final `app.quit()` fires `before-quit` again. Extend it; never register another `before-quit` handler.
+- **Security boundary** (`src/main/security.ts`, wired in `index.ts` and `ipc/index.ts`):
+  - Navigation away from the app page is blocked; `window.open` always fails; webviews are refused.
+  - `shell.openExternal` opens only allowlisted https hosts (`safeExternalUrl`; today `docs.snowflake.com`).
+  - Web permissions are denied except clipboard write.
+  - Every IPC registration goes through a Proxy over `ipcMain` that rejects senders other than the main frame of an app window showing the app page. Domain modules must register only on the `ipcMain` they're handed, never on the raw one.
+  - Production CSP: `connect-src`, `frame-src` and `worker-src` are `'none'`, because on `file://`, `'self'` matches every local file. The dev server's CSP is widened for HMR only.
+  - Packaged builds ignore `ELECTRON_RENDERER_URL` and disable DevTools (`SNOWBOY_DEVTOOLS=1` re-enables it).
 - **Path aliases.** `$lib` → `src/renderer/lib` (the only one in use), `@renderer` → `src/renderer`, `@main` → `src/main` (main bundle only).
 - **Plans.** `.sisyphus/plans/` holds the MVP v0.1 plan, the Wave 4 spec, and the 2026-05-20 handoff. Treat them as history: much of their "next up" work has since shipped (check `git log`).
 
@@ -86,13 +98,24 @@ Three bundles:
 - better-sqlite3 13 is a Node-API addon: one binary per platform works with every Electron version. Its npm package ships `prebuilds/<platform>-<arch>.node` for Linux (glibc ≥ 2.34, plus musl), macOS, and Windows, each x64 and arm64. `lib/binding.js` loads that file whenever it exists and falls back to `build/Release` only when it doesn't, so a prebuild that exists but won't load is never replaced. Nothing compiles on install. On a platform without a prebuild, build by hand (`cd node_modules/better-sqlite3 && bunx node-gyp rebuild`, which needs g++, make, and python3), then run `bun run setup:natives`.
 - Keep `trustedDependencies` in `package.json` a non-empty list. It holds only `electron`, whose package has had no install scripts since Electron 42, as a placeholder. A non-empty list replaces Bun's default allowlist, and that default trusts better-sqlite3. An empty list doesn't work: Bun leaves it out of `bun.lock`, and every later install falls back to the default. Bun ignores better-sqlite3's `gypfile: false`, so a trusted better-sqlite3 gets an implicit `node-gyp rebuild` that builds nothing yet needs Python, plus Visual Studio on Windows. Never `bun pm trust` better-sqlite3 or esbuild (or `--all`); esbuild's blocked postinstall isn't needed either.
 - After an `--ignore-scripts` install, run `bun run setup:natives` before `bun run dev`: electron-vite reads `node_modules/electron/path.txt` and never downloads Electron itself.
+- Packaging keeps `npmRebuild: false`, because a rebuild routes better-sqlite3 13 to node-gyp. `asarUnpack` lists only the `.node` binaries.
+- Each platform's `files` keeps only its own prebuilds. The patterns spell out `darwin` / `win32` / `linux` and use only `${arch}`, because `${os}` expands to mac/win/linux and `${platform}` to the build host.
+
+**Packaging (electron-builder, `electron-builder.yml`)**
+
+- `files` goes in the platform sections only, never at the top level. electron-builder keeps the two as separate matchers, and a platform list of only `!` patterns then packs the whole repo (src/, tests/, docs, `.omc` state). After any packaging change, list `dist/linux-unpacked/resources/app.asar` and confirm it holds only `out/`, `resources/`, `package.json` and production `node_modules`.
+- `dependencies` holds only what main or preload load at runtime: better-sqlite3 and snowflake-sdk. electron-builder packs exactly that tree, and electron-vite externalizes exactly that list. Renderer packages are devDependencies.
+- Packaged builds flip Electron fuses. They ignore `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect`, so Playwright's `_electron.launch` can't attach to `dist/` binaries; check those with a CDP probe (`--remote-debugging-port`). Dev and e2e run the stock `node_modules/electron`, which is unaffected.
+- Keep `grantFileProtocolExtraPrivileges` on while the renderer uses `loadFile()`; turning it off gives a blank window (ERR_FILE_NOT_FOUND).
+- A packaged build's default userData is the same `~/.config/snowboy` as dev, so in scripts and tests always launch it with `--user-data-dir=<temp dir>`. Stop it with SIGTERM to the main process; killing the whole process group makes Chromium abort.
 
 **Tests.**
 - Unit: `bun:test` under `tests/unit/`, grouped by area (`editor/`, `ipc/`, `storage/`, `stores/`, `results/`, `panes/`, …).
   - IPC handler tests build file-local fakes (e.g. `makeFakeSession`) against a fresh in-memory database.
   - Keep UI decision logic in plain TS, so it's unit-testable despite the rune shims (e.g. `lib/panes/worksheetLoad.ts`).
 - e2e: Playwright specs in `tests/e2e/specs/`, launched via `tests/e2e/helpers/launch.ts`.
-  - To fake main-process behaviour without Snowflake, swap an IPC handler in the running app, e.g. `app.evaluate(({ ipcMain }, ch) => { ipcMain.removeHandler(ch); ipcMain.handle(ch, …) }, channel)`. See `tabs.spec.ts`.
+  - To fake main-process behaviour without Snowflake, swap an IPC handler in the running app, e.g. `app.evaluate(({ ipcMain }, ch) => { ipcMain.removeHandler(ch); ipcMain.handle(ch, …) }, channel)`. See `tabs.spec.ts`. Swapped handlers sit on the raw `ipcMain`, so they bypass the IPC sender guard; the guard itself is covered in `hardening.spec.ts`.
+  - `hardening.spec.ts` covers the sandbox, navigation, `window.open`, permissions, CSP and foreign-sender rejection; `startup.spec.ts` covers the single instance, relaunch-after-close, startup failure and early close/reload.
 
 **Commits.** Conventional commits scoped by area: `feat(editor): …`, `fix(results): …`, `docs: …`. Commit or push only when asked. After a delegated agent reports done, confirm its commit is actually in `git log --oneline -3`.
 

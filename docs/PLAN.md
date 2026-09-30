@@ -65,7 +65,7 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
 
 - [x] **M1.1** Upgrade Electron 32 → 44, with better-sqlite3 → a release with prebuilds for the new ABI, and `@types/node` → the bundled Node major. *(D1)* *(Done: Electron 44.5.0, better-sqlite3 13.0.3 Node-API; bun audit 0 Electron advisories.)*
   - AC: gates and e2e pass; `bun audit` shows no Electron advisories.
-- [ ] **M1.2** Renderer hardening. *(D3, D6)*
+- [x] **M1.2** Renderer hardening. *(D3, D6)* *(Done: sandboxed CJS preload; navigation/`window.open`/webview/permission guards; Proxy IPC sender guard; `openExternal` limited to `docs.snowflake.com`; production CSP `connect-src`/`frame-src`/`worker-src` set to `'none'`.)*
   - Preload built as CJS with `sandbox: true`.
   - Deny navigation and `window.open` except app URLs.
   - Permission handler allows clipboard only.
@@ -73,7 +73,7 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
   - `openExternal` is https-only.
   - Production CSP without dev allowances.
   - AC: e2e passes; dropping a link or file does not navigate.
-- [ ] **M1.3** Packaging. *(G8, G9, D4)*
+- [x] **M1.3** Packaging. *(G8, G9, D4)* *(Built on branch `worktree-agent-…` and fast-forwarded to main as `dfd17b3..9632eb8`. The Linux AppImage/deb launch is verified. Stays `[~]` until the packaged build is re-verified with the M1.2 hardening.)* *(Done and re-verified with the hardening applied; see the log.)*
   - Add `electron-builder@^26`.
   - Only better-sqlite3 and snowflake-sdk stay in `dependencies`.
   - Narrow `files` to `out/{main,preload,renderer}` + `resources`.
@@ -81,7 +81,7 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
   - Remove the deprecated `externalizeDepsPlugin`.
   - Fuses: RunAsNode, NODE_OPTIONS, and `--inspect` off; OnlyLoadAppFromAsar and asar integrity on.
   - Gate `ELECTRON_RENDERER_URL` and DevTools on `!app.isPackaged`.
-  - AC: `bun run build:linux` produces an AppImage that launches, and the e2e smoke passes against the packaged app.
+  - AC: `bun run build:linux` produces an AppImage that launches, and a smoke check passes against the packaged app. That check is a CDP renderer probe, because the fuses stop `_electron.launch` from attaching.
   - From the M1.1 review:
     - Set `npmRebuild: false`, since electron-builder would otherwise run the node-gyp trap.
     - Unpack better-sqlite3's `prebuilds/*.node` from the asar.
@@ -89,12 +89,13 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
     - Keep `trustedDependencies` **non-empty**; `["electron"]` is an inert placeholder, since electron@44 has no lifecycle scripts.
     - An empty `[]` is dropped from bun.lock, so later installs fall back to Bun's default allowlist and run better-sqlite3's node-gyp. Verified by the M1.1 lane.
     - Never `bun pm trust better-sqlite3` (or `--all`).
-- [ ] **M1.4** Startup robustness. *(E1)*
+- [x] **M1.4** Startup robustness. *(E1)* *(Done: single-instance lock with relaunch-after-close; startup failure dialog plus exit 1; flush skipped with no windows; session logout capped at 3 s.)*
   - try/catch around startup → error dialog → exit.
   - Single-instance lock that focuses the existing window.
   - Drop `smokeLoadNatives`.
   - AC: a forced DB-open failure shows a dialog and exits; a second launch focuses the first.
 - [ ] **M1.5** Windows installer build. First pass: a Windows-side clone + Windows `bun.exe` (`bun install`, `bun run build:win`). Later: a CI `windows-latest` job (needs push approval, U-3).
+  - From M1.3: cross-building NSIS on Linux fails with `spawn wine ENOENT`, because electron-builder runs the uninstaller stub under Wine. The unpacked Windows app itself builds fine, with the `win32-x64.node` prebuild unpacked and the asar integrity hash embedded. So build the installer on Windows with `bun.exe`.
   - AC: the installer installs, the app launches on Windows, and the smoke passes.
   - From the M1.1 review: if Smart App Control, WDAC or AppLocker blocks Electron's unsigned extractor on first download, document a fallback: unzip the Electron zip into `node_modules\electron\dist`, write `electron.exe` to `path.txt`, then re-run the natives setup script.
 - [ ] **M1.6** README "Install" section: how to build the installer and where the app keeps its data.
@@ -207,6 +208,14 @@ Known limitations until M3–M5:
 - [ ] **M7.9** Bind variables for the INFORMATION_SCHEMA COLUMNS predicates. Needs `RunOptions.binds` plumbed through `runStreaming` and `runQueryRows` and the test fake. Defense in depth on top of M0.6; check that INFORMATION_SCHEMA pushdown behaves the same with binds.
 - [x] **M7.10** Pulled into M0; the SQL lane now guards `--`, `//` and `/*` with an O(1) connector-accurate word check. splitSql: guard `--` inside unquoted URIs, e.g. `PUT file:///tmp/a--b.csv`, with the same `isUriSlashes`-style check the connector uses. *(Done in M0.)*
 - [ ] **M7.11** Supply-chain hygiene: consider bunfig `[install] minimumReleaseAge` (Bun 1.3.9 supports it), plus Dependabot for the action SHA pins and npm deps.
+- [ ] **M7.12** Linux packaging polish:
+  - deb `Depends` should add `libasound2` and `libgbm1`.
+  - Linux icon set as NxN PNGs up to 512 px (today only 1024 px, which hicolor ignores).
+  - Set `desktopName`.
+  - Trim app.asar (65 MiB, mostly snowflake-sdk's dependency tree).
+- [ ] **M7.13** Serve the renderer from a privileged custom scheme (`protocol.handle`) so the `grantFileProtocolExtraPrivileges` fuse can go off; adjust the CSP.
+- [ ] **M7.14** Automate the packaged-app smoke as a CDP probe against `dist/linux-unpacked` (the lane's scratch `cdp-probe.mjs` is a starting point).
+- [ ] **M7.15** Packaged builds still honour `--remote-debugging-port`: CDP works even with `devTools:false`, and fuses don't cover it. Decide whether to refuse it when packaged. That conflicts with the M7.14 CDP smoke unless the smoke runs against a test variant. Low risk on Windows, where DPAPI is per-user anyway; matters more on macOS (keychain ACL per app).
 
 ## Your action items
 
@@ -260,6 +269,32 @@ Known limitations until M3–M5:
   - No leftover Electron processes.
   - M0.1, M0.2 and M0.12 acceptance met.
 - 2026-09-29: Renderer lane implemented M3.5 (the data-loss guard: a failed load blocks saves; retry offered) and M1.7 (Windows-safe e2e cleanup with retries), strengthened the tabs spec, and applied both optional simplifications. typecheck and lint are green. The unit gate waits on the key-pair lane's in-flight tests, and e2e will be re-run in M0.13.
+- 2026-09-29: **M1.2 + M1.4 done; M1.3 re-verified on combined main.**
+  - Hardening: sandboxed CJS preload (`out/preload/index.cjs`); navigation, `window.open`, webview and permission guards; a Proxy over `ipcMain` rejects foreign senders; `openExternal` allows only `docs.snowflake.com`.
+  - Production CSP has `connect-src`, `frame-src` and `worker-src` set to `'none'`, because file:// `'self'` let a page read local files such as a private key (review M1).
+  - Packaged builds ignore `ELECTRON_RENDERER_URL`, and DevTools are off.
+  - Startup: single-instance lock, error dialog plus exit 1, relaunch-after-close works (flush skipped with no windows; logout capped at 3 s).
+  - The lane's review (COMMENT) raised 3 medium findings, all fixed; mutation checks caught 13/13 unit and 16/16 e2e mutations.
+  - Combined verification: `bun install` added electron-builder; typecheck, lint, **593 pass / 1 skip / 0 fail**, **e2e 16/16**, real userData untouched.
+  - **Packaged smoke** (`dist/linux-unpacked`, throwaway userData, CDP):
+    - All 4 startup log lines; h1 "Snowboy" served from `app.asar/out/renderer/index.html`.
+    - The `window.snowboy` bridge is present, and there is no Node in the page.
+    - The settings boot passes the IPC guard; the production CSP is active.
+    - The DB is created in the temp dir; SIGTERM exits 0.
+- 2026-09-29: **M1.3 packaging landed:** `dfd17b3..9632eb8`, fast-forwarded from the lane's worktree branch.
+  - electron-builder 26.17 in `electron-builder.yml`.
+  - `dependencies` is only better-sqlite3 and snowflake-sdk; the bundles are byte-identical; 3 unused packages removed.
+  - `files` is per platform, because a top-level list packed the whole repo; the lane found and fixed that.
+  - Per-target native trimming (~28 MB less); `npmRebuild: false`; only the `.node` files are unpacked.
+  - Fuses: RunAsNode, NODE_OPTIONS and inspect off; OnlyLoadAppFromAsar, asar integrity and cookie encryption on. `grantFileProtocolExtraPrivileges` stays on, because off gives a blank window.
+  - AppImage 136 MiB, deb 103 MiB. Both launch with a temp userData (natives ok → storage ready → window created; the UI renders), and the fuses read back as set.
+  - Windows from Linux: the unpacked app is OK, but NSIS needs Wine, so the installer build moves to M1.5 on Windows.
+  - Gates green; e2e 5/5; clean-copy CI dry run green.
+  - Orchestrator: ESLint ignores `.claude/**` and git ignores `.claude/worktrees/`, so the agent worktree no longer breaks lint.
+- 2026-09-29: M1.1, the key-picker fix, the MFA fix and the plan committed locally: `617ea3e`, `6ab4133`, `f3fceea`, `8870384`. Not pushed yet.
+  - Two M1 lanes launched in parallel:
+    - M1.2 + M1.4 hardening and startup, in the main tree: sandboxed CJS preload, navigation/permission/IPC-sender guards, https-only openExternal, production CSP, packaged-mode gating, startup error dialog, single-instance lock.
+    - M1.3 packaging, in an isolated git worktree: electron-builder 26, dependency split, `npmRebuild:false`, asarUnpack prebuilds, fuses, Linux AppImage/deb plus a Windows cross-build probe.
 - 2026-09-29: **M1.1 done.**
   - Versions: Electron 44.5.0, better-sqlite3 13.0.3 (Node-API prebuilds), @types/node 24.19, engines.node >=22.12.
   - @electron/rebuild removed; `rebuild` is now `setup:natives`, which downloads Electron and load-checks better-sqlite3.
