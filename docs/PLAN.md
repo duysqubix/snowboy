@@ -34,7 +34,7 @@ Unsigned builds are fine for personal use. Windows SmartScreen will warn once ("
 | D-3 | Tabs + splits in v0.1 (A1/A3) | Default adopted | Keep both. |
 | D-4 | Result row cap (C3) | Default adopted | 100k-row preview with a `truncated` banner. "Export all" streams to disk from main. |
 | D-5 | Linux without a keyring (D5) | Default adopted | Session-only in-memory credentials with a clear message. Never plaintext. |
-| D-6 | Electron target (D1) | Default adopted | Latest stable (44.x) before any build leaves your machine. |
+| D-6 | Electron target (D1) | **Done (M1.1)** | Electron 44.5.0 (Node 24.21, Chromium 152). |
 | D-7 | Zone.Identifier signed URL (G12) | Default adopted | Untrack and ignore. No history rewrite. |
 
 ## Milestones & tasks
@@ -53,17 +53,17 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
 - [x] **M0.7** `splitSql` honours backslash escapes. *(C8)* *(Review approved; O(1) connector-style URI guard for `--`, `//` and `/*`.)*
 - [x] **M0.8** Fix the unhandled rejection in `completionPrefetch.ts:51`. *(G11)* *(Review approved; mutation-tested.)*
 - [x] **M0.9** bunfig `[test]` preload + root, so bare `bun test` and filters work; README test docs fixed. *(G12)* *(Review approved.)*
-- [~] **M0.10** Minimal CI: typecheck, lint, unit on ubuntu. *(G2)*
+- [x] **M0.10** Minimal CI: typecheck, lint, unit on ubuntu. *(G2)* *(First CI run [#36648476235](https://github.com/duysqubix/snowboy/actions/runs/36648476235): all steps green in 38 s.)*
   - AC: dry run passes in a clean copy; the workflow runs on the first push.
 - [x] **M0.11** Untrack the Zone.Identifier and `.sisyphus` session JSON; ignore rule added. *(G12)* *(Review approved.)*
 - [x] **M0.12** better-sqlite3 uses the Electron prebuild instead of compiling. *(G7)*
-  - AC: `bun run rebuild` is fast and e2e passes.
+  - AC: `bun run rebuild` is fast and e2e passes. *(Superseded in M1.1: better-sqlite3 13 is Node-API with bundled prebuilds, so `bun run setup:natives` only downloads Electron and load-checks the module.)*
 - [x] **M0.13** Batch verification (orchestrator). *(Gates, rebuild, e2e 5/5, full-tree CI dry run, and three independent reviews all green.)*
   - AC: full gates, native rebuild, e2e, CI dry run, and an independent code review are all green.
 
 ### M1: Supported runtime & installable build
 
-- [ ] **M1.1** Upgrade Electron 32 → 44, with better-sqlite3 → a release with prebuilds for the new ABI, and `@types/node` → the bundled Node major. *(D1)*
+- [x] **M1.1** Upgrade Electron 32 → 44, with better-sqlite3 → a release with prebuilds for the new ABI, and `@types/node` → the bundled Node major. *(D1)* *(Done: Electron 44.5.0, better-sqlite3 13.0.3 Node-API; bun audit 0 Electron advisories.)*
   - AC: gates and e2e pass; `bun audit` shows no Electron advisories.
 - [ ] **M1.2** Renderer hardening. *(D3, D6)*
   - Preload built as CJS with `sandbox: true`.
@@ -82,6 +82,13 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
   - Fuses: RunAsNode, NODE_OPTIONS, and `--inspect` off; OnlyLoadAppFromAsar and asar integrity on.
   - Gate `ELECTRON_RENDERER_URL` and DevTools on `!app.isPackaged`.
   - AC: `bun run build:linux` produces an AppImage that launches, and the e2e smoke passes against the packaged app.
+  - From the M1.1 review:
+    - Set `npmRebuild: false`, since electron-builder would otherwise run the node-gyp trap.
+    - Unpack better-sqlite3's `prebuilds/*.node` from the asar.
+    - Trim other platforms' prebuilds: the package is ~27 MB, ~17 MB of it prebuilds.
+    - Keep `trustedDependencies` **non-empty**; `["electron"]` is an inert placeholder, since electron@44 has no lifecycle scripts.
+    - An empty `[]` is dropped from bun.lock, so later installs fall back to Bun's default allowlist and run better-sqlite3's node-gyp. Verified by the M1.1 lane.
+    - Never `bun pm trust better-sqlite3` (or `--all`).
 - [ ] **M1.4** Startup robustness. *(E1)*
   - try/catch around startup → error dialog → exit.
   - Single-instance lock that focuses the existing window.
@@ -89,6 +96,7 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
   - AC: a forced DB-open failure shows a dialog and exits; a second launch focuses the first.
 - [ ] **M1.5** Windows installer build. First pass: a Windows-side clone + Windows `bun.exe` (`bun install`, `bun run build:win`). Later: a CI `windows-latest` job (needs push approval, U-3).
   - AC: the installer installs, the app launches on Windows, and the smoke passes.
+  - From the M1.1 review: if Smart App Control, WDAC or AppLocker blocks Electron's unsigned extractor on first download, document a fallback: unzip the Electron zip into `node_modules\electron\dist`, write `electron.exe` to `path.txt`, then re-run the natives setup script.
 - [ ] **M1.6** README "Install" section: how to build the installer and where the app keeps its data.
 - [x] **M1.7** Pulled forward into M0 (renderer lane). Make e2e temp-profile cleanup Windows-safe: `rmSync` with `force`/`maxRetries`, and don't fail a passing test on EBUSY (`tests/e2e/helpers/launch.ts`). Needed before running e2e on Windows in M1.5. *(Implemented in M0; the Windows run is confirmed in M1.5.)*
 
@@ -118,7 +126,9 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
   - Map SDK codes: MFA required, master-token expired (390114), auth failed.
   - Drop dead sessions and prompt to reconnect.
   - Strip Electron's "Error invoking remote method" prefix.
-- [ ] **M2.4** **Bug:** `auth.ts:98` sends `clientRequestMfaToken`, but the SDK reads `clientRequestMFAToken` (`connection_config.js:59`), so the MFA token cache is never requested and every password + MFA connect prompts Duo. Found by the M2.1b lane. snowflake-sdk configuration: log level WARN to the app logs dir, no `./snowflake.log`; optional SSO/MFA token cache backed by safeStorage. *(D6: S-7, S-10)*
+- [~] **M2.4** ~~Bug: `auth.ts` sent `clientRequestMfaToken`~~ **Fixed 2026-09-29** (uncommitted): it now sends `clientRequestMFAToken`, the SDK's exact name, with a regression test in `tests/unit/snowflake.test.ts`. This takes effect only if the account sets `ALLOW_CLIENT_MFA_CACHING`.
+  - **Before the preview build:** move the SDK's SSO/MFA token cache from its default plaintext 0600 JSON file (`~/.cache/snowflake`, `%LOCALAPPDATA%` on Windows) to a safeStorage-backed `customCredentialManager` (S-7).
+  - Remaining snowflake-sdk configuration: log level WARN to the app logs dir, no `./snowflake.log`; optional SSO/MFA token cache backed by safeStorage. *(D6: S-7, S-10)*
 - [ ] **M2.5** Live verification with your account (**you**, U-4).
   - Opt-in live smoke via `SNOWBOY_TEST_*`.
   - Manual checklist: connect → run → browse → cancel → export → restart.
@@ -196,13 +206,14 @@ Known limitations until M3–M5:
 - [ ] **M7.8** Remove beads text from AGENTS.md (after U-1).
 - [ ] **M7.9** Bind variables for the INFORMATION_SCHEMA COLUMNS predicates. Needs `RunOptions.binds` plumbed through `runStreaming` and `runQueryRows` and the test fake. Defense in depth on top of M0.6; check that INFORMATION_SCHEMA pushdown behaves the same with binds.
 - [x] **M7.10** Pulled into M0; the SQL lane now guards `--`, `//` and `/*` with an O(1) connector-accurate word check. splitSql: guard `--` inside unquoted URIs, e.g. `PUT file:///tmp/a--b.csv`, with the same `isUriSlashes`-style check the connector uses. *(Done in M0.)*
+- [ ] **M7.11** Supply-chain hygiene: consider bunfig `[install] minimumReleaseAge` (Bun 1.3.9 supports it), plus Dependabot for the action SHA pins and npm deps.
 
 ## Your action items
 
-- [!] **U-1** Remove the leftover beads wiring. Auto mode blocks Claude from deleting it. Run:
+- [!] **U-1** Remove the leftover beads wiring. The repo no longer tracks it (commit `1c83dad`), but local copies remain, and the bd git hooks path is still set (inert: the hooks aren't executable). Auto mode blocks Claude from deleting them. Run:
   `! cd ~/.repos/snowboy && { git config --unset core.hooksPath; rm -rf .beads .agents .codex .claude/settings.json; }`
 - [x] **U-2** Answer D-1: how do you sign in to Snowflake? Answered: SSO, password + MFA, PAT, key-pair.
-- [ ] **U-3** Approve pushing to `duysqubix/snowboy` when CI or a Windows CI build is ready. Pushes need the `github-duysqubix` SSH alias.
+- [x] **U-3** Approve pushing to `duysqubix/snowboy` when CI or a Windows CI build is ready. Pushes need the `github-duysqubix` SSH alias. *(Approved and pushed 2026-09-29.)*
 - [ ] **U-4** Run the live connection check with your account. Include `SELECT 1 AS "a\"` to confirm backslashes are literal inside quoted identifiers; this settles the review's open question on `quoteIdent`. Type credentials into the app yourself; never paste them into chat.
 
 ## Progress log
@@ -249,6 +260,27 @@ Known limitations until M3–M5:
   - No leftover Electron processes.
   - M0.1, M0.2 and M0.12 acceptance met.
 - 2026-09-29: Renderer lane implemented M3.5 (the data-loss guard: a failed load blocks saves; retry offered) and M1.7 (Windows-safe e2e cleanup with retries), strengthened the tabs spec, and applied both optional simplifications. typecheck and lint are green. The unit gate waits on the key-pair lane's in-flight tests, and e2e will be re-run in M0.13.
+- 2026-09-29: **M1.1 done.**
+  - Versions: Electron 44.5.0, better-sqlite3 13.0.3 (Node-API prebuilds), @types/node 24.19, engines.node >=22.12.
+  - @electron/rebuild removed; `rebuild` is now `setup:natives`, which downloads Electron and load-checks better-sqlite3.
+  - trustedDependencies stays `["electron"]`: Bun drops an empty list and falls back to node-gyp.
+  - Breaking changes 33–44 audited; only the 43 dialog defaults needed changes (the key picker starts in the home folder, then the last folder).
+  - Review: APPROVE WITH NITS; all fixes applied.
+  - Verification: typecheck 0, lint 0, 552/1/0, e2e 5/5, clean-copy CI dry run green, dev smoke OK.
+  - `bun audit`: 93 → 38, with 0 critical and 0 Electron.
+- 2026-09-29: M1.1 facts and approved deviations.
+  - Electron **44.5.0** is the latest: Node 24.21.0, Chromium 152, ABI 149.
+  - No better-sqlite3 release ships `electron-v149` assets, so move to **better-sqlite3 ^13.0.3**. It is Node-API, with prebuilds for every platform inside the npm tarball, so no Electron rebuild is ever needed and Windows needs no Visual Studio or Python.
+  - Drop `@electron/rebuild`: it can't handle v13, and its node-abi throws for 44.5. The install script now ensures the Electron binary is downloaded (Electron 42+ dropped its own postinstall) and load-checks better-sqlite3 under Electron.
+  - Remove better-sqlite3 from `trustedDependencies`, because Bun would otherwise run node-gyp.
+- 2026-09-29: **First CI run green:** [#36648476235](https://github.com/duysqubix/snowboy/actions/runs/36648476235) on `703beb3`.
+  - checkout v7, setup-node v7 and setup-bun v2.2 (all SHA-pinned), then the frozen install, typecheck, lint and test all passed. Total 38 s.
+  - **M0 is fully complete.**
+- 2026-09-29: **M0 committed and pushed.** 11 commits `1c83dad..703beb3` on `main`, pushed via the `github-duysqubix` SSH alias.
+  - Commit 1 untracks the beads scaffolding: `.beads/`, `.agents/`, `.codex/` and `.claude/settings.json` are out of the repo. Their local copies remain until U-1.
+  - AGENTS.md now points to CLAUDE.md.
+  - The first CI run is being watched (M0.10).
+  - **M1 started:** M1.1 Electron upgrade in progress, alone because it reinstalls node_modules.
 - 2026-09-29: **M0 complete; M0.10 waits only on the first CI run after a push (U-3).**
   - SQL lane review follow-ups: O(1) `sawScheme` URI guard covering `--`, `//` and `/*`. 81k chars now take 5 ms (was about 2 s).
   - `isCommentOnly` removed; `quoteIdent('')` throws and empty context values are rejected before any USE.
