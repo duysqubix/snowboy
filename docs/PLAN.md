@@ -94,11 +94,11 @@ Order: M0 → M1 → M2 → **preview build** → M3 → M4 → M5 → M6 → **
   - Single-instance lock that focuses the existing window.
   - Drop `smokeLoadNatives`.
   - AC: a forced DB-open failure shows a dialog and exits; a second launch focuses the first.
-- [ ] **M1.5** Windows installer build. First pass: a Windows-side clone + Windows `bun.exe` (`bun install`, `bun run build:win`). Later: a CI `windows-latest` job (needs push approval, U-3).
+- [x] **M1.5** Windows installer build. First pass: a Windows-side clone + Windows `bun.exe` (`bun install`, `bun run build:win`). Later: a CI `windows-latest` job (needs push approval, U-3). *(Done 2026-09-29: `C:\Users\DuanUys\snowboy-build\dist\Snowboy Setup 0.1.0-pre-alpha.exe`, 130 MB, built natively with Windows bun.exe 1.3.14 and Node 25.9; the unpacked-app smoke passes. Installing on your machine is part of U-4.)*
   - From M1.3: cross-building NSIS on Linux fails with `spawn wine ENOENT`, because electron-builder runs the uninstaller stub under Wine. The unpacked Windows app itself builds fine, with the `win32-x64.node` prebuild unpacked and the asar integrity hash embedded. So build the installer on Windows with `bun.exe`.
   - AC: the installer installs, the app launches on Windows, and the smoke passes.
   - From the M1.1 review: if Smart App Control, WDAC or AppLocker blocks Electron's unsigned extractor on first download, document a fallback: unzip the Electron zip into `node_modules\electron\dist`, write `electron.exe` to `path.txt`, then re-run the natives setup script.
-- [ ] **M1.6** README "Install" section: how to build the installer and where the app keeps its data.
+- [x] **M1.6** README "Install" section: how to build the installer and where the app keeps its data. *(Done: README "Install" section for Windows and Linux, plus the data locations.)*
 - [x] **M1.7** Pulled forward into M0 (renderer lane). Make e2e temp-profile cleanup Windows-safe: `rmSync` with `force`/`maxRetries`, and don't fail a passing test on EBUSY (`tests/e2e/helpers/launch.ts`). Needed before running e2e on Windows in M1.5. *(Implemented in M0; the Windows run is confirmed in M1.5.)*
 
 ### M2: Connect to your Snowflake account
@@ -269,6 +269,17 @@ Known limitations until M3–M5:
   - No leftover Electron processes.
   - M0.1, M0.2 and M0.12 acceptance met.
 - 2026-09-29: Renderer lane implemented M3.5 (the data-loss guard: a failed load blocks saves; retry offered) and M1.7 (Windows-safe e2e cleanup with retries), strengthened the tabs spec, and applied both optional simplifications. typecheck and lint are green. The unit gate waits on the key-pair lane's in-flight tests, and e2e will be re-run in M0.13.
+- 2026-09-29: **M1.5 Windows installer built and verified.** Source: `git archive` of `581db3a` exported to `C:\Users\DuanUys\snowboy-build`, then Windows bun.exe 1.3.14 (Node 25.9).
+  - Install and build:
+    - `bun install` (732 packages, 86 s).
+    - `setup:natives` on Windows: "better-sqlite3 13.0.3 (SQLite 3.53.4) loads in Electron 44.5.0 (Node 24.21.0)".
+    - `bun run build:win` builds NSIS natively (no Wine): `dist\Snowboy Setup 0.1.0-pre-alpha.exe`, 130 MB, unsigned. Asar integrity is embedded and the fuses are flipped.
+  - Packaged Windows smoke (`dist\win-unpacked\Snowboy.exe`, throwaway userData, CDP from Windows Node plus the build's Playwright):
+    - All 4 startup log lines; h1 "Snowboy" served from `app.asar`, so the Windows asar-integrity enforcement passed.
+    - The bridge is present with no Node in the page; the boot passes the IPC guard; the production CSP is active; the DB was created.
+    - The real `%APPDATA%\snowboy` was never created; no leftover processes.
+  - M1.6: README Install section.
+  - **M1 complete.**
 - 2026-09-29: **M1.2 + M1.4 done; M1.3 re-verified on combined main.**
   - Hardening: sandboxed CJS preload (`out/preload/index.cjs`); navigation, `window.open`, webview and permission guards; a Proxy over `ipcMain` rejects foreign senders; `openExternal` allows only `docs.snowflake.com`.
   - Production CSP has `connect-src`, `frame-src` and `worker-src` set to `'none'`, because file:// `'self'` let a page read local files such as a private key (review M1).

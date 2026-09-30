@@ -19,6 +19,43 @@ bun run dev
 
 A native Snowboy window should appear. Close it (or `Ctrl+C` in the terminal) to stop the dev server.
 
+## Install
+
+Pre-alpha builds are unsigned and built from source.
+
+### Windows (x64)
+
+From PowerShell in a Windows clone (not from WSL, and not in a WSL checkout), using Windows `bun.exe`, with Node.js 22.12+ on PATH for the build tools:
+
+```powershell
+bun install
+bun run build:win
+```
+
+Run `dist\Snowboy Setup <version>.exe`. It is a one-click, per-user install, with no admin rights needed. SmartScreen warns once about the unsigned installer; choose **More info → Run anyway**.
+
+### Linux (x64)
+
+```bash
+bun install
+bun run build:linux
+```
+
+- **AppImage:** `chmod +x dist/Snowboy-<version>.AppImage` and run it. It needs FUSE 2 (`libfuse2`); without FUSE, add `--appimage-extract-and-run`.
+- **deb:** `sudo apt install ./dist/snowboy_<version>_amd64.deb` installs it to `/opt/Snowboy` and adds a menu entry.
+
+The Linux runtime needs GTK 3, NSS and ALSA.
+
+### Where Snowboy keeps its data
+
+The data lives in `%APPDATA%\snowboy` on Windows and `~/.config/snowboy` on Linux. It holds:
+
+- `snowboy.db`: worksheets, query history and connection profiles.
+- `settings.json`.
+- `secrets.json`: saved passwords, tokens and key passphrases, encrypted by the OS through Electron `safeStorage` (DPAPI on Windows, the keyring on Linux).
+
+Uninstalling keeps this folder. On Linux without a keyring (for example WSL), passwords can't be saved yet.
+
 ## Scripts
 
 | Script                  | What it does                                                                                                   |
