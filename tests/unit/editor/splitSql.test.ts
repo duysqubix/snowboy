@@ -54,6 +54,86 @@ describe('splitSql', () => {
     ]);
   });
 
+  test('semicolon inside a // line comment is NOT a terminator', () => {
+    expect(splitSql('SELECT 1 // x; y\nSELECT 2')).toEqual(['SELECT 1 // x; y\nSELECT 2']);
+  });
+
+  test('// line comment ends at the newline', () => {
+    expect(splitSql('SELECT 1 // this; is; a; comment\n; SELECT 2;')).toEqual([
+      'SELECT 1 // this; is; a; comment',
+      'SELECT 2'
+    ]);
+  });
+
+  test('// in an unquoted PUT file:/// URI is not a comment', () => {
+    expect(splitSql('PUT file:///tmp/x.csv @stage; SELECT 2')).toEqual([
+      'PUT file:///tmp/x.csv @stage',
+      'SELECT 2'
+    ]);
+  });
+
+  test('// later in the same URI is not a comment either', () => {
+    expect(splitSql('PUT file:///tmp/a//b.csv @stage; SELECT 2')).toEqual([
+      'PUT file:///tmp/a//b.csv @stage',
+      'SELECT 2'
+    ]);
+  });
+
+  test('/* in an unquoted PUT file:/// URI is not a comment', () => {
+    expect(splitSql('PUT file:///tmp/data/*.csv @s; SELECT 2;')).toEqual([
+      'PUT file:///tmp/data/*.csv @s',
+      'SELECT 2'
+    ]);
+  });
+
+  test('-- in an unquoted PUT file:/// URI is not a comment', () => {
+    expect(splitSql('PUT file:///tmp/a--b.csv @s; SELECT 2')).toEqual([
+      'PUT file:///tmp/a--b.csv @s',
+      'SELECT 2'
+    ]);
+  });
+
+  test("a quoted string ends the URI run: 'http://x'// still opens a comment", () => {
+    expect(splitSql("SELECT 'http://x'//; note\nSELECT 2;")).toEqual([
+      "SELECT 'http://x'//; note\nSELECT 2"
+    ]);
+  });
+
+  test('whitespace ends the URI run: a later // is a comment again', () => {
+    expect(splitSql('PUT file:///tmp/x.csv @s // a; b\n; SELECT 2;')).toEqual([
+      'PUT file:///tmp/x.csv @s // a; b',
+      'SELECT 2'
+    ]);
+  });
+
+  test('; ends the URI run: a // right after it is a comment again', () => {
+    expect(splitSql('PUT file:///tmp/x.csv;//c\nSELECT 2;')).toEqual([
+      'PUT file:///tmp/x.csv',
+      'SELECT 2'
+    ]);
+  });
+
+  test('an ~80k-char unquoted URI run full of // splits in well under 100 ms', () => {
+    const sql = `PUT file:///${'a//'.repeat(27_000)} @s; SELECT 2`;
+    // Best of 3 so a single GC pause can't fail the guard; the old O(n²) scan took seconds per run.
+    let bestMs = Infinity;
+    let statements: string[] = [];
+    for (let run = 0; run < 3; run++) {
+      const started = performance.now();
+      statements = splitSql(sql);
+      bestMs = Math.min(bestMs, performance.now() - started);
+    }
+    expect(statements).toHaveLength(2);
+    expect(bestMs).toBeLessThan(100);
+  });
+
+  test('// inside a string, quoted identifier or $$ is not a comment', () => {
+    expect(splitSql(`SELECT '//;', "a//;b", $$//;$$ FROM t; SELECT 2`)).toEqual([
+      `SELECT '//;', "a//;b", $$//;$$ FROM t`,
+      'SELECT 2'
+    ]);
+  });
+
   test('semicolon inside block comment is NOT a terminator', () => {
     expect(splitSql('SELECT 1 /* a;b;c */; SELECT 2;')).toEqual([
       'SELECT 1 /* a;b;c */',
@@ -68,11 +148,30 @@ describe('splitSql', () => {
     ]);
   });
 
-  test('semicolon inside $tag$-quoted block is NOT a terminator', () => {
+  test('$tag$ is NOT a dollar-quote delimiter (Snowflake documents only $$)', () => {
     expect(splitSql('SELECT $foo$one; two$foo$ AS x; SELECT 1;')).toEqual([
-      'SELECT $foo$one; two$foo$ AS x',
+      'SELECT $foo$one',
+      'two$foo$ AS x',
       'SELECT 1'
     ]);
+  });
+
+  test('identifier with two $ signs (A$B$C) does not open a dollar-quote', () => {
+    expect(splitSql('SELECT A$B$C FROM t; SELECT 2')).toEqual([
+      'SELECT A$B$C FROM t',
+      'SELECT 2'
+    ]);
+  });
+
+  test('$$a;b$$ stays intact next to bare $ references', () => {
+    expect(splitSql('SELECT $1, $$a;b$$ FROM @stage; SELECT 2')).toEqual([
+      'SELECT $1, $$a;b$$ FROM @stage',
+      'SELECT 2'
+    ]);
+  });
+
+  test('unterminated $$ string consumes rest of input', () => {
+    expect(splitSql('SELECT $$abc; SELECT 2')).toEqual(['SELECT $$abc; SELECT 2']);
   });
 
   test('bare $ (not opening a dollar-quote) is preserved literally', () => {
@@ -105,6 +204,46 @@ SELECT current_role() AS role,
   test('unterminated string consumes rest of input gracefully', () => {
     expect(splitSql("SELECT 'unterminated; SELECT 1;")).toEqual([
       "SELECT 'unterminated; SELECT 1;"
+    ]);
+  });
+
+  // Backslash cases use String.raw so the SQL reads exactly as typed in the editor.
+  test("backslash-escaped quote (\\') does not close a single-quoted string", () => {
+    expect(splitSql(String.raw`SELECT 'it\'s; ok'; SELECT 2`)).toEqual([
+      String.raw`SELECT 'it\'s; ok'`,
+      'SELECT 2'
+    ]);
+  });
+
+  test('escaped backslash before the closing quote still closes the string', () => {
+    expect(splitSql(String.raw`SELECT 'a\\'; SELECT 2`)).toEqual([
+      String.raw`SELECT 'a\\'`,
+      'SELECT 2'
+    ]);
+  });
+
+  test("escaped quote (\\') right before a semicolon keeps the semicolon inside the string", () => {
+    expect(splitSql(String.raw`SELECT 'x\';y'; SELECT 2`)).toEqual([
+      String.raw`SELECT 'x\';y'`,
+      'SELECT 2'
+    ]);
+  });
+
+  test('unterminated string ending in a backslash consumes rest of input', () => {
+    expect(splitSql("SELECT 'a\\")).toEqual(["SELECT 'a\\"]);
+  });
+
+  test('backslash has no escape meaning inside a double-quoted identifier', () => {
+    expect(splitSql(String.raw`SELECT "a\"; SELECT 2`)).toEqual([
+      String.raw`SELECT "a\"`,
+      'SELECT 2'
+    ]);
+  });
+
+  test('backslash has no escape meaning inside a $$-quoted string', () => {
+    expect(splitSql(String.raw`SELECT $$a\$$; SELECT 2`)).toEqual([
+      String.raw`SELECT $$a\$$`,
+      'SELECT 2'
     ]);
   });
 });
@@ -143,6 +282,13 @@ describe('splitSqlSegments', () => {
     expect(segs[2]!.text).toBe('SELECT 1;');
   });
 
+  test('leading // line comment is its own comment segment', () => {
+    const segs = splitSqlSegments('// header\nSELECT 1;');
+    expect(segs.map((s) => s.kind)).toEqual(['comment', 'ws', 'stmt']);
+    expect(segs[0]!.text).toBe('// header');
+    expect(segs[2]!.text).toBe('SELECT 1;');
+  });
+
   test('inline comment inside a statement stays part of the stmt segment', () => {
     const segs = splitSqlSegments('SELECT 1 -- inline\n  AS x;');
     expect(segs.map((s) => s.kind)).toEqual(['stmt']);
@@ -154,6 +300,13 @@ describe('splitSqlSegments', () => {
     expect(segs).toHaveLength(1);
     expect(segs[0]!.kind).toBe('stmt');
     expect(segs[0]!.text).toBe('SELECT 1');
+  });
+
+  test("backslash-escaped quote (\\') inside a string is NOT a stmt boundary", () => {
+    const segs = splitSqlSegments(String.raw`SELECT 'x\';y'; SELECT 2;`);
+    expect(segs.map((s) => s.kind)).toEqual(['stmt', 'ws', 'stmt']);
+    expect(segs[0]!.text).toBe(String.raw`SELECT 'x\';y';`);
+    expect(segs[2]!.text).toBe('SELECT 2;');
   });
 });
 
@@ -176,6 +329,26 @@ describe('statementAtOffset', () => {
     const sql = '-- DELETE FROM prod_data;\nSELECT 1;';
     const seg = statementAtOffset(sql, 5);
     expect(seg).toBeNull();
+  });
+
+  test('cursor in a // line comment between statements returns null', () => {
+    const sql = 'SELECT 1;\n// DROP TABLE prod;\nSELECT 2;';
+    const seg = statementAtOffset(sql, sql.indexOf('DROP'));
+    expect(seg).toBeNull();
+  });
+
+  test('cursor after a ; inside an inline // comment stays in the enclosing statement', () => {
+    const sql = 'SELECT 1 // x; y\n;\nSELECT 2;';
+    const seg = statementAtOffset(sql, sql.indexOf('y'));
+    expect(seg).not.toBeNull();
+    expect(seg!.text).toBe('SELECT 1 // x; y\n;');
+  });
+
+  test('cursor on the statement after a PUT whose URI contains /* runs just that statement', () => {
+    const sql = 'PUT file:///tmp/data/*.csv @s; SELECT 2;';
+    const seg = statementAtOffset(sql, sql.indexOf('SELECT'));
+    expect(seg).not.toBeNull();
+    expect(seg!.text).toBe('SELECT 2;');
   });
 
   test('cursor in /* block */ comment returns null', () => {
@@ -289,6 +462,13 @@ describe('statementAtOffset', () => {
     expect(segs.map((s) => s.kind)).toEqual(['stmt', 'ws', 'stmt']);
     expect(segs[0]!.text).toBe("SELECT 'a;b';");
     expect(segs[2]!.text).toBe('SELECT 2;');
+  });
+
+  test("cursor after a backslash-escaped quote (\\') stays in the enclosing statement", () => {
+    const sql = String.raw`SELECT 'it\'s; ok'; SELECT 2;`;
+    const seg = statementAtOffset(sql, sql.indexOf('ok'));
+    expect(seg).not.toBeNull();
+    expect(seg!.text).toBe(String.raw`SELECT 'it\'s; ok';`);
   });
 
   test('multiple leading semicolons coalesce into one ws segment', () => {

@@ -3,11 +3,16 @@
  *
  * The tokenizer respects every Snowflake lexical context so a semicolon
  * inside one of them is NOT treated as a statement terminator:
- *   - single-quoted strings `'...'` (escape: doubled `''`)
- *   - double-quoted identifiers `"..."` (escape: doubled `""`)
- *   - dollar-quoted strings `$$ ... $$` and `$tag$ ... $tag$`
- *   - line comments `-- ... \n`
+ *   - single-quoted strings `'...'` (escapes: doubled `''`, and a backslash
+ *     escapes the next character, e.g. `\'`)
+ *   - double-quoted identifiers `"..."` (escape: doubled `""`; backslash is literal)
+ *   - dollar-quoted strings `$$ ... $$` (content is literal; Snowflake has no
+ *     `$tag$` form, so `A$B$C` is an identifier, not an opener)
+ *     https://docs.snowflake.com/en/sql-reference/data-types-text#dollar-quoted-string-constants
+ *   - line comments `-- ... \n` and `// ... \n`
  *   - block comments `/* ... *\/` (non-nesting per Snowflake)
+ *
+ * No comment opens inside an unquoted URI such as `file:///tmp/*.csv` (see `tokenize`).
  *
  * Offsets are UTF-16 code unit indices (JavaScript native string indices).
  * They line up with CodeMirror's `EditorState.doc` offsets and stay valid
@@ -41,18 +46,28 @@ function isWsChar(c: string): boolean {
   return c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v';
 }
 
-function isTagChar(c: string): boolean {
-  return /[A-Za-z0-9_]/.test(c);
-}
-
+/**
+ * `//` starts a line comment like `--`. docs.snowflake.com does not document it, but
+ * Snowflake's own statement splitter does (`INLINE_COMMENT_PREFIXES`,
+ * snowflake-connector-python src/snowflake/connector/util_text.py:90):
+ * https://github.com/snowflakedb/snowflake-connector-python/blob/8bd19ee430f0df7d39ac96ce33c3e0f95ebeea70/src/snowflake/connector/util_text.py#L90
+ *
+ * Also like the connector (util_text.py:218-230), `--`, `//` and `/*` open no comment
+ * inside a run of plain characters that contains `://`, so the unquoted URIs that
+ * PUT/GET take (`file:///tmp/data/*.csv`) survive. Whitespace, quotes, `$$`, comments
+ * and `;` end the run (util_text.py:175, :183, :203, :217, :241, :266). `sawScheme`
+ * tracks that in O(1): a plain `:` followed by `//` sets it, any other token clears it.
+ */
 function tokenize(input: string): RawToken[] {
   const tokens: RawToken[] = [];
   const n = input.length;
   let i = 0;
+  let sawScheme = false;
 
   while (i < n) {
     const ch = input[i] ?? '';
     const next = input[i + 1] ?? '';
+    if (tokens[tokens.length - 1]?.kind !== 'other') sawScheme = false;
 
     if (isWsChar(ch)) {
       const start = i;
@@ -61,7 +76,7 @@ function tokenize(input: string): RawToken[] {
       continue;
     }
 
-    if (ch === '-' && next === '-') {
+    if (!sawScheme && ((ch === '-' && next === '-') || (ch === '/' && next === '/'))) {
       const start = i;
       i += 2;
       while (i < n && input[i] !== '\n') i++;
@@ -69,7 +84,7 @@ function tokenize(input: string): RawToken[] {
       continue;
     }
 
-    if (ch === '/' && next === '*') {
+    if (!sawScheme && ch === '/' && next === '*') {
       const start = i;
       i += 2;
       while (i < n) {
@@ -87,7 +102,10 @@ function tokenize(input: string): RawToken[] {
       const start = i;
       i++;
       while (i < n) {
-        if (input[i] === "'") {
+        if (input[i] === '\\') {
+          // Clamped so a trailing backslash in an unterminated string stays in bounds.
+          i = Math.min(i + 2, n);
+        } else if (input[i] === "'") {
           if (input[i + 1] === "'") {
             i += 2;
           } else {
@@ -121,25 +139,12 @@ function tokenize(input: string): RawToken[] {
       continue;
     }
 
-    if (ch === '$') {
+    // A bare $ ($1, $var, A$B) falls through to `other` below.
+    if (ch === '$' && next === '$') {
       const start = i;
-      let tagEnd = i + 1;
-      while (tagEnd < n && isTagChar(input[tagEnd] ?? '')) tagEnd++;
-      if (tagEnd < n && input[tagEnd] === '$') {
-        const tag = input.slice(i, tagEnd + 1);
-        i = tagEnd + 1;
-        const closingIdx = input.indexOf(tag, i);
-        if (closingIdx === -1) {
-          i = n;
-        } else {
-          i = closingIdx + tag.length;
-        }
-        tokens.push({ kind: 'dollar_quote', start, end: i });
-        continue;
-      }
-      // Bare $ (not a dollar-quote opener) is just another significant char.
-      tokens.push({ kind: 'other', start, end: i + 1 });
-      i++;
+      const closingIdx = input.indexOf('$$', i + 2);
+      i = closingIdx === -1 ? n : closingIdx + 2;
+      tokens.push({ kind: 'dollar_quote', start, end: i });
       continue;
     }
 
@@ -149,6 +154,7 @@ function tokenize(input: string): RawToken[] {
       continue;
     }
 
+    if (ch === ':' && next === '/' && input[i + 2] === '/') sawScheme = true;
     tokens.push({ kind: 'other', start: i, end: i + 1 });
     i++;
   }
@@ -277,25 +283,17 @@ export function splitSql(input: string): string[] {
 
     if (tok.kind === 'semicolon') {
       const body = input.slice(stmtStart, tok.start).trim();
-      if (body.length > 0 && !isCommentOnly(body)) out.push(body);
+      if (body.length > 0) out.push(body);
       stmtStart = -1;
     }
   }
 
   if (stmtStart !== -1) {
     const body = input.slice(stmtStart, input.length).trim();
-    if (body.length > 0 && !isCommentOnly(body)) out.push(body);
+    if (body.length > 0) out.push(body);
   }
 
   return out;
-}
-
-function isCommentOnly(stmt: string): boolean {
-  const stripped = stmt
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/--[^\n]*/g, '')
-    .trim();
-  return stripped.length === 0;
 }
 
 /**

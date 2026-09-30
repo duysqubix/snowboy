@@ -53,6 +53,22 @@ test('$$ hello $$ is parsed as a string literal', () => {
   expect(stringToken?.name).toBe('String');
 });
 
+// String.raw keeps backslashes literal, so the SQL reads exactly as typed in the editor.
+test("backslash-escaped quote (\\') stays inside the string literal", () => {
+  const strings = getTokens(String.raw`SELECT 'it\'s; ok'`).filter(t => t.name === 'String');
+  expect(strings.map(t => t.text)).toEqual([String.raw`'it\'s; ok'`]);
+});
+
+test('escaped backslash before the closing quote still closes the string literal', () => {
+  const strings = getTokens(String.raw`SELECT 'a\\', 1`).filter(t => t.name === 'String');
+  expect(strings.map(t => t.text)).toEqual([String.raw`'a\\'`]);
+});
+
+test('backslash is literal inside a double-quoted identifier', () => {
+  const idents = getTokens(String.raw`SELECT "a\" FROM t`).filter(t => t.name === 'QuotedIdentifier');
+  expect(idents.map(t => t.text)).toEqual([String.raw`"a\"`]);
+});
+
 test('-- and /* */ comments are recognized', () => {
   const tokens1 = getTokens('-- line comment\nSELECT 1');
   expect(tokens1.some(t => t.name === 'LineComment')).toBe(true);
